@@ -7,24 +7,23 @@ The components say nothing about what a structure means: a `Node` with items lai
 - `<Stage title subtitle?>`: the page frame and theme. Wrap the whole visualization in exactly one Stage.
 - `<Node …>`: every other part of a visualization. A node is one of three things:
   - a value: `<Node value={7} />` shows a primitive (a number, string, boolean, or `null`);
-  - content: `<Node>any text or markup</Node>` shows its children, for explanations, captions, and labels;
+  - content: `<Node>any text or markup</Node>` shows its children, for explanations, captions, indices, and pointer names;
   - a collection: `<Node items={values} layout="row" />` arranges child nodes. Without an `item` snippet, each primitive item becomes a value node (drawn by its type's renderer, if typed) and each array item a nested collection; to control each item, give `{#snippet item(value, index, type)} <Node {value} {type} … /> {/snippet}`, where `type` is the item's atomic type name or `undefined`.
-- Props for nodes with `items`:
-  - `items`: an array of values.
-  - `layout`: `'row'` (default), `'column'`, `'wrap'` (a row that wraps onto new lines), or `'grid'`.
+- Annotations are nodes too. Arrange a node's children with `layout` to put an index, caption, or pointer name beside or above a value:
+  `<Node layout="column"><Node size="small">{index}</Node><Node {value} /><Node size="small">i</Node></Node>`. Without `layout`, children flow as ordinary text.
+- Props for every node:
+  - `layout`: `'row'`, `'column'`, `'wrap'` (a row that wraps onto new lines), or `'grid'`; arranges a collection's items (default `'row'`) or, when set, a node's children.
   - `columns`: the number of grid columns; defaults to a near-square grid.
   - `nested`: the layout for items that are themselves arrays, such as the rows of a matrix (default `'row'`).
-- Props for every node, including collections:
-  - `shape`: `'box'` (a cell; the default for a value), `'plain'` (no frame; the default for content and collections), `'card'` (a framed surface), or `'circle'`. A framed collection draws its frame around the whole group.
-  - `role`: `'idle'` (default), `'active'` (being examined now), `'visited'` (already examined), `'found'`, or `'muted'`.
-  - `label`: small text, shown in the corner of a value or content node (such as an index) and as a caption above a collection.
-  - `marker`: text attached to the node, such as a pointer name; it hangs below the node, or sits beside it inside a column.
+  - `shape`: `'box'` (a cell; the default for a value), `'plain'` (no frame; the default for content and collections), `'card'` (a framed surface), or `'circle'`. A framed node with a layout draws its frame around the whole group.
+  - `fill` and `stroke`: background and border colours, each a palette name (`'neutral'`, `'blue'`, `'green'`, `'amber'`, `'red'`, `'purple'`; a light shade as a fill and a strong shade as a stroke) or any CSS colour. What a colour means, such as the element being examined or one already checked, is up to you; make it consistent within a visualization, and draw it in the design block when the request leaves it open.
+  - `opacity`: from 0 to 1, such as 0.4 to fade a node.
   - `font`: `'sans'`, `'serif'`, or `'mono'`; nested nodes inherit it unless they set their own.
   - `size`: `'small'`, `'medium'`, `'large'`, `'xlarge'`, or a number of rem such as `1.2`, so it can come from `pick([...])` or `real(0.9, 1.4)`; nested nodes scale with it.
   - `type`: an atomic type name, such as `'Int'`. If the view defines a renderer snippet for that type, or for a type it refines, the node is drawn by it (see the block guide's Type renderers); otherwise it draws its default box with the type's `unit` after the value.
   - Every prop is a natural design dimension, especially `layout`, `shape`, `font`, and `size`.
 
-Component props are a natural place for design values: draw them in the design block and pass them through, such as `layout={flow}` or `label={showIndices ? index : undefined}`, and type renderers can use them too, so seeded presentations differ in presentation while showing the same steps.
+Component props are a natural place for design values: draw them in the design block and pass them through, such as `layout={flow}`, or use them to decide which annotation nodes to show, and type renderers can use them too, so seeded presentations differ in presentation while showing the same steps.
 
 Example, with input, algorithm, design, and a script-free view:
 
@@ -60,13 +59,12 @@ Example, with input, algorithm, design, and a script-free view:
 <Stage title="Array walk">
   <Node items={values} layout={flow}>
     {#snippet item(value, index, type)}
-      <Node
-        {value}
-        {type}
-        label={showIndices ? index : undefined}
-        marker={index === i ? 'i' : undefined}
-        role={index < i ? 'visited' : index === i ? 'active' : 'idle'}
-      />
+      <Node layout="column">
+        {#if showIndices}<Node size="small">{index}</Node>{/if}
+        {@const colour = index === i ? 'amber' : index < i ? 'blue' : undefined}
+        <Node {value} {type} fill={colour} stroke={colour} />
+        {#if index === i}<Node size="small">i</Node>{/if}
+      </Node>
     {/snippet}
   </Node>
   <Node shape="card" size={textSize}>

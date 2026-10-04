@@ -21,12 +21,16 @@
     --sv-line: #d7deea;
     --sv-surface: #ffffff;
     --sv-canvas: #f6f8fb;
-    --sv-active: #fef3c7;
-    --sv-active-line: #d4a72c;
-    --sv-visited: #e8f0fe;
-    --sv-visited-line: #7aa5ea;
-    --sv-found: #e3f7ec;
-    --sv-found-line: #3caf78;
+    --sv-amber: #fef3c7;
+    --sv-amber-line: #d4a72c;
+    --sv-blue: #e8f0fe;
+    --sv-blue-line: #7aa5ea;
+    --sv-green: #e3f7ec;
+    --sv-green-line: #3caf78;
+    --sv-red: #fde8e8;
+    --sv-red-line: #d9534f;
+    --sv-purple: #f1e8fd;
+    --sv-purple-line: #8b5cf6;
     --sv-radius: 10px;
     font-family: system-ui, sans-serif;
   }

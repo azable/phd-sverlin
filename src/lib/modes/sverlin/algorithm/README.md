@@ -17,7 +17,11 @@ Compute everything inline in markup. Svelte re-evaluates template expressions wh
   {@const current = i >= 0 && i < values.length ? values[i] : null}
   <Node items={values}>
     {#snippet item(value, index)}
-      <Node {value} role={index === i ? 'active' : index < i ? 'visited' : 'idle'} />
+      <Node
+        {value}
+        fill={index === i ? 'amber' : undefined}
+        stroke={index === i ? 'amber' : undefined}
+      />
     {/snippet}
   </Node>
   <Node>{current === null ? 'Not started' : `Checking ${current}`}</Node>
@@ -28,7 +32,7 @@ Facts about the algorithm, such as which cells were checked, are often clearer r
 
 ### Type renderers
 
-A top-level snippet named after a domain type is that type's default renderer: every node showing a value of the type is drawn by it, including items drawn without an `item` snippet, `<Node type="Int" … />`, and nodes given an item's `type`. It takes the plain value and `node`, the props the caller set on that node (such as `role`, `label`, and `marker`), so spreading `{...node}` after the renderer's own props lets the caller's settings win:
+A top-level snippet named after a domain type is that type's default renderer: every node showing a value of the type is drawn by it, including items drawn without an `item` snippet, `<Node type="Int" … />`, and nodes given an item's `type`. It takes the plain value and `node`, the props the caller set on that node (such as `fill` or `size`), so spreading `{...node}` after the renderer's own props lets the caller's settings win:
 
 ```svelte
 {#snippet Int(value, node)}

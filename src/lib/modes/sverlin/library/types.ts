@@ -9,8 +9,11 @@ export type Layout = 'row' | 'column' | 'wrap' | 'grid';
 /** The frame a node is drawn in. */
 export type NodeShape = 'box' | 'plain' | 'card' | 'circle';
 
-/** Visual role of one node at the current step. */
-export type NodeRole = 'idle' | 'active' | 'visited' | 'found' | 'muted';
+/** A theme palette colour, giving a light shade as a fill and a strong shade as a stroke. */
+export type PaletteColor = 'neutral' | 'blue' | 'green' | 'amber' | 'red' | 'purple';
+
+/** A palette colour name, or any other CSS colour. */
+export type NodeColor = PaletteColor | (string & {});
 
 /** Font family of a node, from the system fonts the sandbox can use. */
 export type NodeFont = 'sans' | 'serif' | 'mono';

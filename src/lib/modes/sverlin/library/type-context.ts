@@ -5,7 +5,7 @@
 
 import { getContext, setContext, type Snippet } from 'svelte';
 
-import type { NodeFont, NodeRole, NodeShape, NodeSize, Primitive } from './types';
+import type { NodeColor, NodeFont, NodeShape, NodeSize, Primitive } from './types';
 
 export type TypeContext = {
   /** The atomic type name of item `index` of a container taken from the props, if typed. */
@@ -18,9 +18,9 @@ export type TypeContext = {
 
 /** The props a node was given, passed to its type's renderer so the caller's settings win. */
 export type NodeProps = {
-  role?: NodeRole;
-  label?: string | number;
-  marker?: string;
+  fill?: NodeColor;
+  stroke?: NodeColor;
+  opacity?: number;
   shape?: NodeShape;
   font?: NodeFont;
   size?: NodeSize | number;

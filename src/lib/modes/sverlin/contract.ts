@@ -37,6 +37,7 @@ export const linearSearchSource = `<script lang="sverlin" domain>
   const pointerName = pick(['i', 'index']);
   const font = pick(['sans', 'serif']);
   const textSize = pick(['medium', 'large']);
+  const current = pick(['amber', 'red']);
 </script>
 {#snippet Int(value, node)}
   <Node shape={intShape} {value} {...node} />
@@ -44,16 +45,21 @@ export const linearSearchSource = `<script lang="sverlin" domain>
 <Stage title="Linear search" subtitle="Find {target} by checking each cell in order.">
   <Node items={values} layout={flow}>
     {#snippet item(value, index, type)}
-      <Node
-        {value}
-        {type}
-        label={showIndices ? index : undefined}
-        marker={index === i ? pointerName : undefined}
-        role={index < i ? 'visited' : index === i ? (found ? 'found' : 'active') : 'idle'}
-      />
+      <Node layout="column">
+        {@const colour = index === i ? (found ? 'green' : current) : index < i ? 'blue' : undefined}
+        {#if showIndices}<Node size="small">{index}</Node>{/if}
+        <Node {value} {type} fill={colour} stroke={colour} />
+        {#if index === i}<Node size="small">{pointerName}</Node>{/if}
+      </Node>
     {/snippet}
   </Node>
-  <Node shape="card" role={found ? 'found' : 'idle'} {font} size={textSize}>
+  <Node
+    shape="card"
+    fill={found ? 'green' : undefined}
+    stroke={found ? 'green' : undefined}
+    {font}
+    size={textSize}
+  >
     {#if i < 0}Start at the first cell.{:else if found}Found {target} at index {i}.{:else if i < values.length}{values[i]} is not {target}; move right.{:else}{target} is not in the array.{/if}
   </Node>
 </Stage>`;

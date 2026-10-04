@@ -2,4 +2,12 @@
 
 export { default as Stage } from './Stage.svelte';
 export { default as Node } from './Node.svelte';
-export type { Layout, NodeFont, NodeRole, NodeShape, NodeSize, Primitive } from './types';
+export type {
+  Layout,
+  NodeColor,
+  NodeFont,
+  NodeShape,
+  NodeSize,
+  PaletteColor,
+  Primitive
+} from './types';
