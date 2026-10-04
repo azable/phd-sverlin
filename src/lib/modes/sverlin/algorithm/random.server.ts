@@ -41,7 +41,12 @@ function mix32(value: number): number {
  */
 export function keyedDraws(root: BlockStatement, seed: number): (draw: AnyNode) => number {
   const keys = drawKeys(root);
-  return (draw) => seededRandom(seed, drawStream(keys.get(draw) ?? ''))();
+  return (draw) => keyedRandom(seed, keys.get(draw) ?? '');
+}
+
+/** One random number in [0, 1) for a seed and a key, independent of every other key. */
+export function keyedRandom(seed: number, key: string): number {
+  return seededRandom(seed, drawStream(key))();
 }
 
 /**

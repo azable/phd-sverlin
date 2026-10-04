@@ -36,7 +36,7 @@ export const linearSearchSource = `<script lang="sverlin" domain>
   const spacing = pick(['small', 'medium', 'large']);
   // How every Int cell is drawn, through the Int renderer below.
   const cellRadius = pick(['small', 'medium', 'full']);
-  const cellBorder = pick(['thin', 'thick']);
+  const cellStroke = pick(['none', 'thin', 'thick']);
   const cellPadding = pick(['small', 'medium']);
   const cellFont = pick(['sans', 'mono']);
   // What the colours mean stays fixed; which colours show it is drawn.
@@ -55,7 +55,7 @@ export const linearSearchSource = `<script lang="sverlin" domain>
 {#snippet Int(value, node)}
   <Node
     radius={cellRadius}
-    border={cellBorder}
+    strokeWidth={cellStroke}
     padding={cellPadding}
     font={cellFont}
     {value}

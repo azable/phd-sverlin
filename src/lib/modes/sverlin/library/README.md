@@ -18,7 +18,7 @@ Titles and annotations are nodes too: `<Node size="xlarge" weight="bold">Linear 
 
 `shape` is a preset of defaults, and every value it sets can be overridden by the matching prop:
 
-- `shape`: `'box'` (a cell: small padding, medium radius, thin neutral border and fill, a minimum size, and bold, slightly larger text; the default for a value), `'card'` (a framed surface with medium padding), or `'plain'` (no frame or padding; the default for content and collections). A framed node with a layout draws its frame around the whole group.
+- `shape`: `'box'` (a cell: small padding, medium radius, thin neutral stroke and fill, a minimum size, and bold, slightly larger text; the default for a value), `'card'` (a framed surface with medium padding), or `'plain'` (no frame or padding; the default for content and collections). A framed node with a layout draws its frame around the whole group.
 
 Arrangement:
 
@@ -32,9 +32,9 @@ Frame and colour:
 
 - `padding`: space inside the frame.
 - `radius`: `'none'`, `'small'`, `'medium'`, or `'full'` (a circle for a short value, a pill for a long one).
-- `border`: `'none'`, `'thin'`, or `'thick'`.
+- `strokeWidth`: `'none'`, `'thin'`, `'thick'`, or a number of pixels.
 - `minSize`: `'none'`, `'small'`, `'medium'`, `'large'`, or a number of em; the smallest width and height.
-- `fill` and `stroke`: background and border colours, each a palette name (`'neutral'`, `'blue'`, `'green'`, `'amber'`, `'red'`, `'purple'`; a light shade as a fill and a strong shade as a stroke) or any CSS colour. What a colour means, such as the element being examined or one already checked, is up to you; make it consistent within a visualization, and draw it in the design block when the request leaves it open.
+- `fill` and `stroke`: background and stroke (border) colours, each a palette name (`'neutral'`, `'blue'`, `'green'`, `'amber'`, `'red'`, `'purple'`; a light shade as a fill and a strong shade as a stroke) or any CSS colour. `stroke="none"` (or `stroke={false}`) turns the stroke off whatever its width. What a colour means, such as the element being examined or one already checked, is up to you; make it consistent within a visualization, and draw it in the design block when the request leaves it open.
 - `opacity`: from 0 to 1, such as 0.4 to fade a node.
 
 Text:
@@ -49,6 +49,8 @@ Spacing values (`padding`, `gap`) are `'none'`, `'small'`, `'medium'`, `'large'`
 Types:
 
 - `type`: an atomic type name, such as `'Int'`. If the view defines a renderer snippet for that type, or for a type it refines, the node is drawn by it (see the block guide's Type renderers); otherwise it draws its default box with the type's `unit` after the value.
+
+Unspecified props vary by themselves: every presentation draws its own `radius`, `strokeWidth` (sometimes none at all), `padding`, and a pale fill and stroke tint for boxes and cards, plus the gap between arranged items and the page font, so two presentations of a pair look different even when no prop is set. Set a prop whenever its value matters, such as a colour that shows which element is current; a node's own props and its type's renderer always win over drawn defaults. To use the plain presets instead, put `const defaults = 'fixed';` in the design block, for example once the participant has settled on a look.
 
 Every prop is a natural design dimension, especially `layout`, `gap`, `radius`, `font`, and `size`: draw values in the design block and pass them through, such as `layout={flow}`, or use them to decide which annotation nodes to show. Type renderers can use them too, so seeded presentations differ in presentation while showing the same steps. Prefer a few drawn values used consistently over ad hoc values on individual nodes.
 

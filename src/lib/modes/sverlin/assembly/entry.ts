@@ -15,9 +15,23 @@ document.head.append(theme);
 
 const playback = window as typeof window & { __sverlinStep?: number; __sverlinSeed?: number };
 const step = Math.min(Math.max(playback.__sverlinStep ?? 0, 0), states.length - 1);
-const { __types: types = {}, ...state } = states[step] as Record<string, unknown> & {
+const {
+  __types: types = {},
+  __defaults: defaults,
+  ...state
+} = states[step] as Record<string, unknown> & {
   __types?: Record<string, string>;
+  __defaults?: { font?: string } & Record<string, unknown>;
 };
+
+// The drawn font applies page-wide, so every node inherits it unless it sets its own.
+const fonts: Record<string, string> = {
+  sans: 'system-ui, sans-serif',
+  serif: "ui-serif, Georgia, 'Times New Roman', serif",
+  mono: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
+};
+if (defaults?.font && fonts[defaults.font])
+  document.documentElement.style.fontFamily = fonts[defaults.font];
 
 // Arrays and objects in the props, by path, so a node can find the types of its items.
 const paths = new WeakMap<object, string>();
@@ -39,7 +53,8 @@ function unitOf(typeName: string): string | undefined {
 mount(Main, {
   target: document.getElementById('app') ?? document.body,
   props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
-  context: new Map([
+  context: new Map<string, unknown>([
+    ['sverlin:defaults', defaults],
     [
       'sverlin:types',
       {

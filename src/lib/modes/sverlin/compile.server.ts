@@ -19,6 +19,8 @@ import {
   type TraceState
 } from './algorithm/interpret.server';
 import { noAtoms, type AtomRegistry } from './algorithm/atoms.server';
+import { drawDefaults } from './library/node/defaults';
+import { keyedRandom } from './algorithm/random.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
 const maximumSourceBytes = 256 * 1024;
@@ -27,7 +29,7 @@ const maximumBundleBytes = 2 * 1024 * 1024;
 // Library sources are embedded at build time so production needs no source tree.
 const librarySources = Object.fromEntries(
   Object.entries(
-    import.meta.glob<string>('./library/**/*.{svelte,ts}', {
+    import.meta.glob<string>(['./library/**/*.{svelte,ts}', '!./library/**/*.test.ts'], {
       query: '?raw',
       import: 'default',
       eager: true
@@ -215,13 +217,24 @@ export async function bundlePresentation(
   const parameters = prepared.design
     ? interpretBlock(prepared.source, prepared.design, (body) => interpretDesign(body, seed))
     : {};
+  // Unspecified Node props are drawn from the seed unless the design opts out (see library/node/defaults.ts).
+  if (
+    parameters.defaults !== undefined &&
+    parameters.defaults !== 'fixed' &&
+    parameters.defaults !== 'drawn'
+  )
+    throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".');
+  const defaults =
+    parameters.defaults === 'fixed' ? undefined : drawDefaults((key) => keyedRandom(seed, key));
   // Every presentation shows every master step until steps can be mapped to frames.
   const masterSteps = master.map((_, index) => index);
-  // Each step's state carries its atomic types for the view, under a key no variable can use.
+  // Each step's state carries its atomic types and the drawn defaults for the view, under keys no
+  // variable can use.
   const states = masterSteps.map((index) => ({
     ...master[index].state,
     ...parameters,
-    __types: master[index].types
+    __types: master[index].types,
+    ...(defaults ? { __defaults: defaults } : {})
   }));
   const result = await bundle(
     prepared.component,
@@ -237,7 +250,8 @@ export async function bundlePresentation(
     labels: masterSteps.map((index) => master[index].label),
     masterLabels: master.map(({ label }) => label),
     masterSteps,
-    parameters
+    // Drawn defaults are recorded with the design values, so analysis sees each side's full look.
+    parameters: defaults ? { ...parameters, __defaults: defaults } : parameters
   };
 }
 

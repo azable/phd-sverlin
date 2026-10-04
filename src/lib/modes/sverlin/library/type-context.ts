@@ -5,18 +5,7 @@
 
 import { getContext, setContext, type Snippet } from 'svelte';
 
-import type {
-  Border,
-  MinSize,
-  NodeColor,
-  NodeFont,
-  NodeShape,
-  NodeSize,
-  Primitive,
-  Radius,
-  Spacing,
-  Weight
-} from './types';
+import type { NodeDefaults, NodeProps, Primitive } from './node/props';
 
 export type TypeContext = {
   /** The atomic type name of item `index` of a container taken from the props, if typed. */
@@ -25,22 +14,6 @@ export type TypeContext = {
   parent(typeName: string): string | undefined;
   /** A type's unit, or that of the nearest type it refines. */
   unit(typeName: string): string | undefined;
-};
-
-/** The props a node was given, passed to its type's renderer so the caller's settings win. */
-export type NodeProps = {
-  shape?: NodeShape;
-  fill?: NodeColor;
-  stroke?: NodeColor;
-  opacity?: number;
-  color?: NodeColor;
-  font?: NodeFont;
-  size?: NodeSize | number;
-  weight?: Weight;
-  padding?: Spacing;
-  radius?: Radius;
-  border?: Border;
-  minSize?: MinSize;
 };
 
 export type Renderer = Snippet<[Primitive, NodeProps]>;
@@ -68,4 +41,9 @@ export function rendererFor(typeName: string): { name: string; snippet: Renderer
 export function markRendering(name: string): void {
   const rendering = getContext<ReadonlySet<string> | undefined>('sverlin:rendering');
   setContext('sverlin:rendering', new Set([...(rendering ?? []), name]));
+}
+
+/** The defaults this presentation drew (see node/defaults.ts), if any. */
+export function defaultsContext(): NodeDefaults | undefined {
+  return getContext<NodeDefaults | undefined>('sverlin:defaults');
 }

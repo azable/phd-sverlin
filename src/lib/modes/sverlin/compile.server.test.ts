@@ -7,6 +7,8 @@ import {
   prepareSvelteComponent
 } from './compile.server';
 import { linearSearchSource } from './contract';
+import { keyedRandom } from './algorithm/random.server';
+import { drawDefaults as drawWith } from './library/node/defaults';
 import libraryGuide from './library/README.md?raw';
 
 describe('single-component Svelte compilation', () => {
@@ -141,7 +143,7 @@ describe('single-component Svelte compilation', () => {
       5
     );
     expect(result.labels).toEqual(['Start', 'Summed']);
-    expect(result.parameters).toEqual({ accent: 'red' });
+    expect(result.parameters).toMatchObject({ accent: 'red' });
   });
 
   it('rejects view scripts and values that shadow library components', async () => {
@@ -213,6 +215,20 @@ describe('single-component Svelte compilation', () => {
         '<script lang="sverlin" domain>const Node = type("integer");</script><script lang="sverlin">yield "A";</script>'
       )
     ).rejects.toThrow('"Node" names a library component');
+  });
+
+  it('records drawn defaults with the design values, unless the design fixes them', async () => {
+    const source = '<script lang="sverlin">yield "A";</script><Node value={1} />';
+    const drawn = await compileSvelteComponent(source, 3);
+    expect(drawn.parameters.__defaults).toEqual(drawWith((key) => keyedRandom(3, key)));
+    const fixed = await compileSvelteComponent(
+      `${source}<script lang="sverlin" design>const defaults = 'fixed';</script>`,
+      3
+    );
+    expect(fixed.parameters).toEqual({ defaults: 'fixed' });
+    await expect(
+      compileSvelteComponent(`${source}<script lang="sverlin" design>const defaults = 1;</script>`)
+    ).rejects.toThrow('defaults must be "fixed" or "drawn"');
   });
 
   it('rejects authored library imports', async () => {

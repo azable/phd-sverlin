@@ -8,22 +8,34 @@
   import { untrack, type Snippet } from 'svelte';
 
   import Node from './Node.svelte';
+  import { defaultsContext, markRendering, rendererFor, typeContext } from '../type-context';
   import { paletteColor } from './palette';
-  import { markRendering, rendererFor, typeContext, type NodeProps } from './type-context';
+  import {
+    alignments,
+    measure,
+    minSizes,
+    namedSizes,
+    presets,
+    radii,
+    spacings,
+    strokeWidths
+  } from './presets';
   import type {
     Align,
-    Border,
     Layout,
     MinSize,
     NodeColor,
     NodeFont,
+    NodeProps,
     NodeShape,
     NodeSize,
+    NodeStroke,
     Primitive,
     Radius,
     Spacing,
+    StrokeWidth,
     Weight
-  } from './types';
+  } from './props';
 
   let {
     value,
@@ -45,7 +57,7 @@
     gap,
     align,
     radius,
-    border,
+    strokeWidth,
     minSize,
     children
   }: {
@@ -67,8 +79,8 @@
     shape?: NodeShape;
     /** Background colour: a palette name such as 'amber' (a light shade), or any CSS colour. */
     fill?: NodeColor;
-    /** Border colour: a palette name (a strong shade), or any CSS colour. */
-    stroke?: NodeColor;
+    /** Stroke colour: a palette name (a strong shade), any CSS colour, or 'none' or false for no stroke. */
+    stroke?: NodeStroke;
     /** From 0 (invisible) to 1 (default). */
     opacity?: number;
     /** Text colour: a palette name ('neutral' is muted), or any CSS colour. */
@@ -85,61 +97,16 @@
     /** How arranged items line up across the layout direction. */
     align?: Align;
     radius?: Radius;
-    border?: Border;
+    /** Stroke width: 'none', 'thin', 'thick', or a number of pixels. */
+    strokeWidth?: StrokeWidth;
     /** The smallest width and height. */
     minSize?: MinSize;
     children?: Snippet;
   } = $props();
 
-  type Preset = {
-    padding?: Spacing;
-    radius?: Radius;
-    border?: Border;
-    minSize?: MinSize;
-    fill?: NodeColor;
-    stroke?: NodeColor;
-    weight?: Weight;
-    /** Text size relative to the enclosing node, in em. */
-    scale?: number;
-  };
-  const presets: Record<NodeShape, Preset> = {
-    box: {
-      padding: 'small',
-      radius: 'medium',
-      border: 'thin',
-      minSize: 'medium',
-      fill: 'neutral',
-      stroke: 'neutral',
-      weight: 'bold',
-      scale: 1.25
-    },
-    card: {
-      padding: 'medium',
-      radius: 'medium',
-      border: 'thin',
-      fill: 'neutral',
-      stroke: 'neutral'
-    },
-    plain: { padding: 'none', radius: 'small', border: 'none' }
-  };
-  const spacings = { none: '0', small: '0.4em', medium: '0.75em', large: '1.25em' };
-  const radii = { none: '0', small: '0.25rem', medium: 'var(--sv-radius)', full: '9999px' };
-  const borders = { none: '0', thin: '2px', thick: '4px' };
-  const minSizes = { none: '0', small: '2em', medium: '2.8em', large: '4em' };
-  const namedSizes: Record<NodeSize, number> = { small: 0.85, medium: 1, large: 1.25, xlarge: 1.6 };
-  const alignments = { start: 'flex-start', center: 'center', end: 'flex-end' };
-
-  /** A named scale value, or a number in em. */
-  const measure = (scale: Record<string, string>, setting: string | number | undefined) =>
-    setting === undefined
-      ? undefined
-      : typeof setting === 'number'
-        ? Number.isFinite(setting)
-          ? `${Math.min(Math.max(setting, 0), 20)}em`
-          : undefined
-        : scale[setting];
-
   const types = typeContext();
+  // The presentation's drawn defaults sit between this node's own props and its shape's preset.
+  const drawn = defaultsContext();
   // A typed value node draws through its type's renderer, if the view defines one. Resolved once:
   // each step mounts afresh, and the renderer is marked so nodes inside it never call it again.
   const rendered = untrack(() =>
@@ -162,7 +129,7 @@
         weight,
         padding,
         radius,
-        border,
+        strokeWidth,
         minSize
       }).filter(([, setting]) => setting !== undefined)
     ) as NodeProps
@@ -172,12 +139,14 @@
   const collection = $derived(items !== undefined);
   const resolvedShape = $derived(shape ?? (collection || children ? 'plain' : 'box'));
   const arrangement = $derived(layout ?? (collection ? 'row' : undefined));
-  // A framed group keeps the frame but not a cell's text size, weight, or minimum size.
-  const preset = $derived(
-    arrangement
-      ? { ...presets[resolvedShape], scale: undefined, weight: undefined, minSize: undefined }
-      : presets[resolvedShape]
-  );
+  const preset = $derived.by(() => {
+    const seeded = resolvedShape === 'plain' ? undefined : drawn?.[resolvedShape];
+    const base = { ...presets[resolvedShape], ...seeded };
+    // A framed group keeps the frame but not a cell's text size, weight, or minimum size.
+    return arrangement
+      ? { ...base, scale: undefined, weight: undefined, minSize: undefined }
+      : base;
+  });
   const fontSize = $derived(
     typeof size === 'number' && Number.isFinite(size)
       ? `${Math.min(Math.max(size, 0.5), 4)}rem`
@@ -188,6 +157,22 @@
           : undefined
   );
   const resolvedWeight = $derived(weight ?? preset.weight);
+  // stroke="none" or false turns the stroke off whatever its width; otherwise the width
+  // comes from the prop, the drawn defaults, or the preset, in that order.
+  const strokeOff = $derived(stroke === 'none' || stroke === false);
+  const strokeColour = $derived(
+    strokeOff
+      ? undefined
+      : paletteColor((stroke as NodeColor | undefined) ?? preset.stroke, 'stroke')
+  );
+  const resolvedStrokeWidth = $derived.by(() => {
+    const width = strokeOff ? 'none' : (strokeWidth ?? preset.strokeWidth ?? 'none');
+    return typeof width === 'number'
+      ? Number.isFinite(width)
+        ? `${Math.min(Math.max(width, 0), 20)}px`
+        : '0'
+      : strokeWidths[width];
+  });
   const gridColumns = $derived(
     columns ?? Math.max(1, Math.ceil(Math.sqrt(items?.length ?? (arrangement === 'grid' ? 4 : 1))))
   );
@@ -208,8 +193,8 @@
         : 400}
     style:color={paletteColor(color, 'text')}
     style:background-color={paletteColor(fill ?? preset.fill, 'fill')}
-    style:border-color={paletteColor(stroke ?? preset.stroke, 'stroke')}
-    style:border-width={borders[border ?? preset.border ?? 'none']}
+    style:border-color={strokeColour}
+    style:border-width={resolvedStrokeWidth}
     style:border-radius={radii[radius ?? preset.radius ?? 'none']}
     style:padding={measure(spacings, padding ?? preset.padding)}
     style:min-width={measure(minSizes, minSize ?? preset.minSize)}
@@ -222,7 +207,7 @@
       <div
         class="items {arrangement}"
         style:--sv-columns={gridColumns}
-        style:gap={measure(spacings, gap ?? 'medium')}
+        style:gap={measure(spacings, gap ?? drawn?.gap ?? 'medium')}
         style:align-items={alignment}
       >
         {#if collection}

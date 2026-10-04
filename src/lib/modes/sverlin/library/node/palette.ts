@@ -1,6 +1,6 @@
 /** Theme palette colours for fills, strokes, and text; other values pass through as CSS colours. */
 
-import type { NodeColor, PaletteColor } from './types';
+import type { NodeColor, PaletteColor } from './props';
 
 const palette: Record<PaletteColor, { fill: string; stroke: string; text: string }> = {
   neutral: { fill: 'var(--sv-surface)', stroke: 'var(--sv-line)', text: 'var(--sv-muted)' },
