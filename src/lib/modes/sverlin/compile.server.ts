@@ -95,6 +95,8 @@ export type PreparedComponent = {
   master: MasterStep[];
   atoms: AtomRegistry;
   design?: Block;
+  /** Whether <Link> components sit at the top of the view, between top-level nodes. */
+  topLevelLinks?: boolean;
 };
 
 export class InvalidSvelteSourceError extends Error {
@@ -188,20 +190,19 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
         `"${library}" names a library component; choose another variable name.`
       );
     const renderers = typeRenderers(ast, atoms, source);
-    const component = compile(
-      withGeneratedScripts(withNodeRefs(svelteSource, ast, source), props, renderers),
-      {
-        filename: 'Main.svelte',
-        generate: 'client',
-        css: 'injected',
-        dev: false
-      }
-    ).js.code;
+    const { tagged, topLevelLinks } = withNodeRefs(svelteSource, ast, source);
+    const component = compile(withGeneratedScripts(tagged, props, renderers), {
+      filename: 'Main.svelte',
+      generate: 'client',
+      css: 'injected',
+      dev: false
+    }).js.code;
     return {
       source,
       component,
       master,
       atoms,
+      ...(topLevelLinks ? { topLevelLinks } : {}),
       ...(blocks.design ? { design: blocks.design } : {})
     };
   } catch (cause) {
@@ -231,7 +232,10 @@ export async function bundlePresentation(
     throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".');
   const defaults =
     parameters.defaults === 'fixed' ? undefined : drawDefaults((key) => keyedRandom(seed, key));
-  const frame = frameSettings(parameters.frame);
+  const frame = {
+    ...frameSettings(parameters.frame),
+    ...(prepared.topLevelLinks ? { linked: true } : {})
+  };
   // Every presentation shows every master step until steps can be mapped to frames.
   const masterSteps = master.map((_, index) => index);
   // Each step's state carries its atomic types, the page frame, and the drawn defaults for the view,
@@ -328,35 +332,60 @@ function withGeneratedScripts(
 }
 
 /**
- * Tag every <Node> in the view with the line and column (both from 1) of its tag in the authored
- * source, as the hidden prop __ref, so a rendered node can be traced back to the markup that drew
- * it when a participant selects it for feedback, and an arrangement varies by its own key. The prop goes on the tag's own line, so line numbers are unchanged.
+ * Tag every <Node> and <Link> in the view with the line and column (both from 1) of its tag in the
+ * authored source, as the hidden prop __ref, so a rendered node or link can be traced back to the
+ * markup that drew it when a participant selects it for feedback. A <Node> with links among its
+ * children is also marked __links, so it lays them out; links at the top of the view mark the root. The prop goes on the tag's own line, so line numbers are unchanged.
  */
-function withNodeRefs(svelteSource: string, ast: unknown, source: string): string {
-  const tags: { start: number; name: string }[] = [];
-  visit(ast, (node) => {
-    const tag = node as {
-      type: string;
-      name?: string;
-      start?: number;
-      attributes?: { name?: string; start?: number }[];
-    };
-    if (tag.type !== 'InlineComponent' || tag.name !== 'Node' || tag.start === undefined) return;
-    const reserved = tag.attributes?.find(({ name }) => name?.startsWith('__'));
-    if (reserved)
-      throw new InvalidSvelteSourceError(
-        `Node props starting with __, such as , are reserved for the library.`,
-        { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
-      );
-    tags.push({ start: tag.start, name: tag.name });
-  });
+function withNodeRefs(
+  svelteSource: string,
+  ast: { html?: unknown },
+  source: string
+): { tagged: string; topLevelLinks: boolean } {
+  type Tag = {
+    type?: string;
+    name?: string;
+    start?: number;
+    attributes?: { name?: string; start?: number }[];
+  };
+  const tags: { start: number; name: string; links: boolean }[] = [];
+  let topLevelLinks = false;
+  // Each <Link> belongs to the nearest <Node> around it, which then lays out with links.
+  const walk = (value: unknown, around: { links: boolean } | undefined): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const part of value) walk(part, around);
+      return;
+    }
+    const tag = value as Tag & Record<string, unknown>;
+    const library = tag.type === 'InlineComponent' && (tag.name === 'Node' || tag.name === 'Link');
+    if (library && tag.start !== undefined) {
+      const reserved = tag.attributes?.find(({ name }) => name?.startsWith('__'));
+      if (reserved)
+        throw new InvalidSvelteSourceError(
+          `${tag.name} props starting with __, such as ${reserved.name}, are reserved for the library.`,
+          { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
+        );
+      const entry = { start: tag.start, name: tag.name as string, links: false };
+      tags.push(entry);
+      if (tag.name === 'Link') {
+        if (around) around.links = true;
+        else topLevelLinks = true;
+      }
+      walk(tag.children, tag.name === 'Node' ? entry : around);
+      return;
+    }
+    for (const [key, child] of Object.entries(tag))
+      if (key !== 'attributes' && key !== 'parent' && key !== 'metadata') walk(child, around);
+  };
+  walk(ast.html, undefined);
   let tagged = svelteSource;
-  for (const { start, name } of tags.sort((a, b) => b.start - a.start)) {
+  for (const { start, name, links } of tags.sort((a, b) => b.start - a.start)) {
     const { line, column } = sourcePosition(source, start);
     const end = start + name.length + 1;
-    tagged = `${tagged.slice(0, end)} __ref="${line}:${column + 1}"${tagged.slice(end)}`;
+    tagged = `${tagged.slice(0, end)} __ref="${line}:${column + 1}"${links ? ' __links' : ''}${tagged.slice(end)}`;
   }
-  return tagged;
+  return { tagged, topLevelLinks };
 }
 
 /**
@@ -514,23 +543,14 @@ function frameSettings(value: unknown): FrameSettings {
         .join(', ')}.`
     );
   };
-  const settings = [
-    'ratio',
-    'justify',
-    'align',
-    'padding',
-    'layout',
-    'constraints',
-    'links',
-    'layoutSeed'
-  ];
+  const settings = ['ratio', 'justify', 'align', 'padding', 'layout', 'constraints', 'layoutSeed'];
   const unknown = Object.keys(given).find((key) => !settings.includes(key));
   if (unknown)
     throw new InvalidSvelteSourceError(
       `The design value frame has no setting ${unknown}; use ${settings.join(', ')}.`
     );
-  // Relations and links are short strings, checked in full where the page lays out.
-  const strings = (key: 'constraints' | 'links') => {
+  // Relations are short strings, checked in full where the page lays out.
+  const strings = (key: 'constraints') => {
     const list = given[key];
     if (list === undefined) return undefined;
     if (
@@ -547,7 +567,6 @@ function frameSettings(value: unknown): FrameSettings {
   const layoutSeed = given.layoutSeed;
   if (layoutSeed !== undefined && !Number.isSafeInteger(layoutSeed))
     throw new InvalidSvelteSourceError('The design value frame.layoutSeed must be a whole number.');
-  const links = strings('links');
   const padding = given.padding ?? 'large';
   if (!(typeof padding === 'number' && Number.isFinite(padding)))
     choice('padding', spacings, 'large');
@@ -558,7 +577,6 @@ function frameSettings(value: unknown): FrameSettings {
     padding: padding as FrameSettings['padding'],
     layout: choice('layout', { column: 1, row: 1, free: 1 }) as FrameSettings['layout'],
     ...(constraints ? { constraints } : {}),
-    ...(links ? { links } : {}),
     ...(layoutSeed !== undefined ? { layoutSeed: layoutSeed as number } : {})
   };
 }

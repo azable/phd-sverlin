@@ -273,3 +273,35 @@ describe('layout choices', () => {
     }
   });
 });
+
+describe('link components', () => {
+  it('draws each link spec as an edge carrying its id, with its own curve style', () => {
+    const boxes = [
+      { key: 'a', width: 40, height: 40 },
+      { key: 'b', width: 40, height: 40 },
+      { key: 'c', width: 40, height: 40 }
+    ];
+    const result = arrange(boxes, {
+      template: 'free',
+      gap: 8,
+      curve: 'straight',
+      links: ['a -> b', { from: 'b', to: 'c', directed: false, id: '12:3', curve: 'curved' }],
+      random: keyedRandom(2, 'layout')
+    });
+    expect(result.edges.map(({ link, id, directed }) => ({ link, id, directed }))).toEqual([
+      { link: 'a -> b', id: undefined, directed: true },
+      { link: 'b - c', id: '12:3', directed: false }
+    ]);
+    // The written link runs straight, as the arrangement asks; the component curves, as it asks.
+    const numbers = result.edges.map(({ path }) =>
+      path
+        .split(/[ ,MC]+/u)
+        .filter(Boolean)
+        .map(Number)
+    );
+    const offLine = ([x1, y1, cx1, cy1, , , x2, y2]: number[]) =>
+      Math.abs((x2 - x1) * (cy1 - y1) - (y2 - y1) * (cx1 - x1)) / Math.hypot(x2 - x1, y2 - y1);
+    expect(offLine(numbers[0])).toBeLessThan(1);
+    expect(offLine(numbers[1])).toBeGreaterThan(1);
+  });
+});

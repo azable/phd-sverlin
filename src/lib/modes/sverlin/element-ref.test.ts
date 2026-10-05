@@ -25,6 +25,13 @@ describe('element locations', () => {
     expect(locateElement(source, '5:1')).toMatchObject({ markup: '<Node' });
   });
 
+  it('locates link components too', () => {
+    expect(locateElement('<Node>\n  <Link from="a" to="b" />\n</Node>', '2:3')).toMatchObject({
+      line: 2,
+      markup: '<Link from="a" to="b" />'
+    });
+  });
+
   it('rejects ids that name no <Node> tag', () => {
     expect(locateElement(source, '2:2')).toBeUndefined();
     expect(locateElement(source, '1:1')).toBeUndefined();

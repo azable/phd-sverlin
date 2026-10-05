@@ -28,10 +28,10 @@ export type FrameSettings = {
   layout?: FrameLayout;
   /** Relations between top-level nodes by key, as for a node's constraints. */
   constraints?: string[];
-  /** Links between top-level nodes by key, as for a node's links. */
-  links?: string[];
   /** A seed for the top-level arrangement alone, to keep a free layout the participant liked. */
   layoutSeed?: number;
+  /** Set when <Link> components join top-level nodes, so the root lays out with them. */
+  linked?: boolean;
 };
 
 /** The arrangements the page frame offers its top-level nodes. */

@@ -38,3 +38,13 @@ describe('source highlights', () => {
     ).toEqual(['<Node items={values}>']);
   });
 });
+
+describe('link highlights', () => {
+  it('spans a <Link> tag the same way as a <Node>', () => {
+    const doc = '<Node layout="free">\n  <Link from="a" to="b" label={"a > b"} />\n</Node>';
+    const ranges = highlightRanges(EditorState.create({ doc }), [{ line: 2, column: 3 }]);
+    expect(ranges.map(({ from, to }) => doc.slice(from, to))).toEqual([
+      '<Link from="a" to="b" label={"a > b"} />'
+    ]);
+  });
+});

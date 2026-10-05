@@ -74,7 +74,6 @@
     minSize,
     children,
     key,
-    links,
     constraints,
     flow,
     chain,
@@ -82,7 +81,8 @@
     layoutSeed,
     __ref,
     __id,
-    __type
+    __type,
+    __links
   }: {
     /** A primitive to display, when the node has neither items nor children. */
     value?: Primitive;
@@ -127,10 +127,8 @@
     /** The smallest width and height. */
     minSize?: MinSize;
     children?: Snippet;
-    /** A name its parent's links and constraints refer to this node by. */
+    /** A name its parent's links and relations refer to this node by. */
     key?: string;
-    /** Links between children by key: 'a -> b' draws an arrow, 'a - b' a line. */
-    links?: readonly string[];
     /** Relations between children by key: above, below, leftOf, rightOf, sameRow, sameColumn. */
     constraints?: readonly string[];
     /** In a free layout, the axis arrows point along: 'x' (rightwards) or 'y' (downwards). */
@@ -154,6 +152,8 @@
     __id?: string;
     /** Internal: the type of the node a renderer draws. */
     __type?: string;
+    /** Internal: set by the compiler when <Link> components sit among this node's children. */
+    __links?: boolean;
   } = $props();
 
   const types = typeContext();
@@ -204,7 +204,8 @@
 
   const collection = $derived(items !== undefined);
   const resolvedShape = $derived(shape ?? (collection || children ? 'plain' : 'box'));
-  const arrangement = $derived(layout ?? (collection ? 'row' : undefined));
+  // Links need positions to join, so a node with links and no layout is laid out freely.
+  const arrangement = $derived(layout ?? (collection ? 'row' : __links ? 'free' : undefined));
   const preset = $derived.by(() => {
     const seeded = resolvedShape === 'plain' ? undefined : drawn?.[resolvedShape];
     const base = { ...presets[resolvedShape], ...seeded };
@@ -249,8 +250,7 @@
   const solved = $derived<Template | undefined>(
     arrangement === 'free'
       ? 'free'
-      : (arrangement === 'row' || arrangement === 'column') &&
-          (links?.length || constraints?.length)
+      : (arrangement === 'row' || arrangement === 'column') && (constraints?.length || __links)
         ? arrangement
         : undefined
   );
@@ -309,7 +309,6 @@
       <Arranged
         template={solved}
         align={align ?? (arrangement === 'column' ? 'center' : 'start')}
-        {links}
         {constraints}
         {flow}
         {chain}

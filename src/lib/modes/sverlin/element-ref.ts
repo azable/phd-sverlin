@@ -1,10 +1,10 @@
 /**
- * Where a selected element came from: the <Node> tag its id names in the presentation's source
+ * Where a selected element came from: the <Node> or <Link> tag its id names in the presentation's source
  * (see provideNodeIds in library/type-context.ts for how ids are formed).
  */
 
 export type ElementLocation = {
-  /** Line and column (both from 1) of the element's <Node> tag. */
+  /** Line and column (both from 1) of the element's <Node> or <Link> tag. */
   line: number;
   column: number;
   /** Which render of that tag it was, from 1, such as the third time round a loop. */
@@ -18,14 +18,15 @@ export type ElementLocation = {
 const elementId = /^(\d{1,5}):(\d{1,5})(?:#(\d{1,5}))?((?:\/\d{1,5}){0,8})$/u;
 const maxMarkup = 200;
 
-/** Locate an element id in a Sverlin source, or undefined if it names no <Node> tag there. */
+/** Locate an element id in a Sverlin source, or undefined if it names no <Node> or <Link> there. */
 export function locateElement(source: string, id: string): ElementLocation | undefined {
   const match = elementId.exec(id);
   if (!match) return undefined;
   const line = Number(match[1]);
   const column = Number(match[2]);
   const text = source.split('\n')[line - 1];
-  if (text === undefined || !/^<Node(?:[\s/>]|$)/u.test(text.slice(column - 1))) return undefined;
+  if (text === undefined || !/^<(?:Node|Link)(?:[\s/>]|$)/u.test(text.slice(column - 1)))
+    return undefined;
   const trimmed = text.trim();
   return {
     line,

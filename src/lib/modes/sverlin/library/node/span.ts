@@ -12,7 +12,8 @@ import {
   type Anchor,
   type ArrangeBox,
   type ArrangeOptions,
-  type ArrangeResult
+  type ArrangeResult,
+  type LinkSpec
 } from './arrange';
 
 /** A box inside a child, named by the child's key rather than its place at one step. */
@@ -67,7 +68,7 @@ export function solveSpan(inputs: readonly SpanInput[]): SpanLayout {
   const [first] = inputs;
   const solved = arrange(boxes, {
     ...first.options,
-    links: union(inputs.map(({ options }) => options.links)),
+    links: unionLinks(inputs.map(({ options }) => options.links)),
     constraints: union(inputs.map(({ options }) => options.constraints)),
     // The tightest space any step leaves, so the layout fits at every step.
     aspect: Math.min(...inputs.map(({ options }) => options.aspect ?? 16 / 9)),
@@ -79,6 +80,17 @@ export function solveSpan(inputs: readonly SpanInput[]): SpanLayout {
     ...solved,
     positions: Object.fromEntries(solved.placements.map(({ key, x, y }) => [key, { x, y }]))
   };
+}
+
+/** Every link any step has, once each: a link component by its id, a written link by its text. */
+function unionLinks(lists: readonly (readonly (string | LinkSpec)[] | undefined)[]) {
+  const seen = new Map<string, string | LinkSpec>();
+  for (const link of lists.flatMap((list) => list ?? [])) {
+    const key =
+      typeof link === 'string' ? `text:${link.trim()}` : `id:${link.id ?? JSON.stringify(link)}`;
+    if (!seen.has(key)) seen.set(key, typeof link === 'string' ? link.trim() : link);
+  }
+  return [...seen.values()];
 }
 
 /**

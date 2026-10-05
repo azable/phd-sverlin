@@ -251,7 +251,7 @@ describe('single-component Svelte compilation', () => {
     ).rejects.toThrow('frame.padding must be one of');
     await expect(
       compileSvelteComponent(
-        design("const frame = { layout: 'free', constraints: ['note below cells'], links: [] };")
+        design("const frame = { layout: 'free', constraints: ['note below cells'] };")
       )
     ).resolves.toBeDefined();
     await expect(
@@ -260,6 +260,23 @@ describe('single-component Svelte compilation', () => {
     await expect(
       compileSvelteComponent(design('const frame = { constraints: [1] };'))
     ).rejects.toThrow('frame.constraints must be a list of strings');
+  });
+
+  it('tags links like nodes, and marks the nodes and roots they join', () => {
+    const algorithm = '<script lang="sverlin">yield "A";</script>';
+    const nested = prepareSvelteComponent(
+      `${algorithm}\n<Node layout="free">\n  <Node key="a">a</Node><Node key="b">b</Node>\n  {#if true}<Link from="a" to="b" />{/if}\n</Node>`
+    );
+    expect(nested.component).toMatch(/__ref: ['"]4:13['"]/u);
+    expect(nested.component).toMatch(/__links: true/u);
+    expect(nested.topLevelLinks).toBeUndefined();
+    const top = prepareSvelteComponent(
+      `${algorithm}<Node key="a">a</Node><Node key="b">b</Node><Link from="a" to="b" />`
+    );
+    expect(top.topLevelLinks).toBe(true);
+    expect(() => prepareSvelteComponent(`${algorithm}\n<Link from="a" to="b" __id="x" />`)).toThrow(
+      'Link props starting with __, such as __id, are reserved'
+    );
   });
 
   it('tags every Node with its source position and reserves __ props', async () => {

@@ -38,6 +38,10 @@ export type ArrangeEdge = {
   directed: boolean;
   /** The link this edge draws, as written, such as 'a -> b'. */
   link: string;
+  /** The id of the link component it draws, if it came from one. */
+  id?: string;
+  /** The middle of the curve, where a label goes. */
+  middle: { x: number; y: number };
 };
 
 export type ArrangeResult = {
@@ -64,8 +68,8 @@ export type ArrangeOptions = {
   template: Template;
   /** How a row's or column's children line up across it. */
   align?: 'start' | 'center' | 'end';
-  /** Links such as 'a -> b' (directed) or 'a - b'. */
-  links?: readonly string[];
+  /** Links such as 'a -> b' (directed) or 'a - b', or link components' specs. */
+  links?: readonly (string | LinkSpec)[];
   /**
    * Relations such as 'a below b' (directly below, centred, a gap away), 'a rightOf b', or
    * 'a sameRow b' (centred on one horizontal line, in either order).
@@ -90,6 +94,15 @@ export type ArrangeOptions = {
    * value cell of a column that also holds labels.
    */
   anchors?: Readonly<Record<string, Anchor>>;
+};
+
+/** A link from a <Link> component: its ends by key, its id, and a curve style of its own, if any. */
+export type LinkSpec = {
+  from: string;
+  to: string;
+  directed: boolean;
+  id?: string;
+  curve?: 'straight' | 'curved';
 };
 
 /** A box a link attaches to: inside child `box`, relative to that child's top-left. */
@@ -172,17 +185,33 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     );
   }
 
-  const links = (options.links ?? []).flatMap((text) => {
-    const match = /^\s*(\S+)\s*(->|-)\s*(\S+)\s*$/u.exec(text);
-    if (!match) {
-      problems.push(`"${text}" is not a link such as "a -> b".`);
-      return [];
-    }
-    const from = anchorOf(match[1], text);
-    const to = anchorOf(match[3], text);
+  const links = (options.links ?? []).flatMap((link) => {
+    let spec: LinkSpec;
+    if (typeof link === 'string') {
+      const match = /^\s*(\S+)\s*(->|-)\s*(\S+)\s*$/u.exec(link);
+      if (!match) {
+        problems.push(`"${link}" is not a link such as "a -> b".`);
+        return [];
+      }
+      spec = { from: match[1], to: match[3], directed: match[2] === '->' };
+    } else spec = link;
+    const text = `${spec.from} ${spec.directed ? '->' : '-'} ${spec.to}`;
+    const from = anchorOf(spec.from, text);
+    const to = anchorOf(spec.to, text);
     return !from || !to || from.box === to.box
       ? []
-      : [{ source: from.box, target: to.box, from, to, directed: match[2] === '->', text }];
+      : [
+          {
+            source: from.box,
+            target: to.box,
+            from,
+            to,
+            directed: spec.directed,
+            text,
+            id: spec.id,
+            curve: spec.curve
+          }
+        ];
   });
 
   const related = (options.constraints ?? []).flatMap((text) => {
@@ -428,7 +457,7 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     : shape === 'scatter' || (options.random?.('curve.style') ?? 0) >= 0.5;
   const bends = [0.15, 0.3, 0.5].flatMap((bend) => [bend * side, -bend * side]);
   const preference = curvy ? [...bends, 0] : [0, ...bends];
-  const edges = links.map(({ from: tail, to: head, directed, text }) => {
+  const edges = links.map(({ from: tail, to: head, directed, text, id, curve }) => {
     const [from, to] = [boxAt(tail), boxAt(head)];
     const obstacles = [
       ...boxes.flatMap((_, box) =>
@@ -453,11 +482,23 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
         .filter((part) => !overlaps(part, box));
       return { outer, parts };
     };
-    const { path, start, end } = routeCurve(from, to, obstacles, preference, {
+    // A link component may set its own curve style.
+    const order = curve ? (curve === 'curved' ? [...bends, 0] : [0, ...bends]) : preference;
+    const { path, start, end, halfway } = routeCurve(from, to, obstacles, order, {
       from: surround(tail, from),
       to: surround(head, to)
     });
-    return { x1: start.x, y1: start.y, x2: end.x, y2: end.y, path, directed, link: text };
+    return {
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      path,
+      directed,
+      link: text,
+      middle: halfway,
+      ...(id ? { id } : {})
+    };
   });
 
   return {

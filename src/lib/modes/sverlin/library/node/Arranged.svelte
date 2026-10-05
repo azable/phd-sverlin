@@ -19,16 +19,17 @@
     layoutSeedFor,
     type Anchor,
     type ArrangeEdge,
+    type LinkSpec,
     type Template
   } from './arrange';
   import type { ChainShape } from './chain';
-  import { measure, spacings } from './presets';
+  import { paletteColor } from './palette';
+  import { measure, spacings, strokeWidths } from './presets';
   import type { Align, Spacing } from './props';
 
   let {
     template,
     align,
-    links = [],
     constraints = [],
     flow,
     chain,
@@ -40,7 +41,6 @@
   }: {
     template: Template;
     align?: Align;
-    links?: readonly string[];
     constraints?: readonly string[];
     flow?: 'x' | 'y';
     /** The shape a chain of links takes; unset, the seed draws one. */
@@ -56,6 +56,19 @@
     scope: string;
     children?: Snippet;
   } = $props();
+
+  /** How a link component asked to be drawn. */
+  type LinkStyle = { dashed: boolean; label?: string; stroke?: string; strokeWidth?: string };
+  const colourOf = (style?: LinkStyle) =>
+    style?.stroke ? (paletteColor(style.stroke, 'stroke') ?? 'var(--sv-muted)') : 'var(--sv-muted)';
+  const widthOf = (style?: LinkStyle) => {
+    const width = style?.strokeWidth;
+    if (!width) return '1.5px';
+    const pixels = Number(width);
+    return Number.isFinite(pixels)
+      ? `${Math.min(Math.max(pixels, 0.5), 12)}px`
+      : (strokeWidths[width as keyof typeof strokeWidths] ?? '1.5px');
+  };
 
   const seed = seedContext();
   const memory = layoutMemoryContext();
@@ -73,6 +86,7 @@
     height: number;
     edges: ArrangeEdge[];
     choices: { chain?: string; curve: 'straight' | 'curved' };
+    styles: Record<string, LinkStyle>;
   }>();
   // Bumped when a nested arrangement settles, to lay out again with its new size.
   let revision = $state(0);
@@ -132,9 +146,44 @@
   $effect(() => {
     void revision;
     if (!host) return;
-    const elements = [...host.children].filter(
-      (child): child is HTMLElement => child instanceof HTMLElement
+    // Link components sit among the children as hidden markers: they are links, not boxes.
+    const markers = [...host.children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement && child.hasAttribute('data-sv-link')
     );
+    const elements = [...host.children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement && !child.hasAttribute('data-sv-link')
+    );
+    const specs: LinkSpec[] = markers.map(({ dataset }) => ({
+      from: dataset.from ?? '',
+      to: dataset.to ?? '',
+      directed: dataset.directed !== 'false',
+      ...(dataset.svLink ? { id: dataset.svLink } : {}),
+      ...(dataset.curve === 'straight' || dataset.curve === 'curved'
+        ? { curve: dataset.curve }
+        : {})
+    }));
+    const styles: Record<string, LinkStyle> = Object.fromEntries(
+      markers.flatMap(({ dataset }) =>
+        dataset.svLink
+          ? [
+              [
+                dataset.svLink,
+                {
+                  dashed: dataset.dashed === 'true',
+                  label: dataset.label,
+                  stroke: dataset.stroke,
+                  strokeWidth: dataset.strokeWidth
+                }
+              ]
+            ]
+          : []
+      )
+    );
+    // Links this step draws, by their components' ids.
+    const present = new Set(specs.map(({ id }) => id));
+    const drawn = (edge: ArrangeEdge) => edge.id !== undefined && present.has(edge.id);
     const fontSize = parseFloat(getComputedStyle(host).fontSize) || 16;
     const space = parseFloat(measure(spacings, gap) ?? '0') * fontSize;
     const boxes = elements.map((element, index) => ({
@@ -177,7 +226,7 @@
     const options = {
       template,
       align,
-      links,
+      links: specs,
       constraints,
       flow,
       chain,
@@ -206,12 +255,12 @@
     let placements: { x: number; y: number }[];
     if (span && boxes.every(({ key }) => span.positions[key])) {
       placements = boxes.map(({ key }) => span.positions[key]);
-      const present = new Set(links.map((text) => text.trim()));
       shown = {
         width: span.width,
         height: span.height,
-        edges: span.edges.filter(({ link }) => present.has(link.trim())),
-        choices: span.choices
+        edges: span.edges.filter(drawn),
+        choices: span.choices,
+        styles
       };
     } else {
       const solved = untrack(() =>
@@ -222,8 +271,9 @@
       shown = {
         width: solved.width,
         height: solved.height,
-        edges: solved.edges,
-        choices: solved.choices
+        edges: solved.edges.filter(drawn),
+        choices: solved.choices,
+        styles
       };
     }
     elements.forEach((element, index) => {
@@ -253,26 +303,49 @@
   </div>
   <!-- Arrows are drawn over the nodes, so filled boxes never hide them. -->
   {#if result?.edges.length}
-    <svg class="links" width={result.width} height={result.height} aria-hidden="true">
+    {@const shown = result}
+    {@const styleOf = (edge: ArrangeEdge) => (edge.id ? shown.styles[edge.id] : undefined)}
+    {@const colours = [...new Set(shown.edges.map((edge) => colourOf(styleOf(edge))))]}
+    <svg class="links" width={shown.width} height={shown.height} aria-hidden="true">
       <defs>
-        <marker
-          id={markerId}
-          viewBox="0 0 10 10"
-          refX="10"
-          refY="5"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto-start-reverse"
-        >
-          <path class="head" d="M0,0 L10,5 L0,10 z" />
-        </marker>
+        {#each colours as colour, index (colour)}
+          <marker
+            id="{markerId}-{index}"
+            viewBox="0 0 10 10"
+            refX="10"
+            refY="5"
+            markerUnits="userSpaceOnUse"
+            markerWidth="9"
+            markerHeight="9"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L10,5 L0,10 z" style:fill={colour} />
+          </marker>
+        {/each}
       </defs>
-      {#each result.edges as edge, index (index)}
+      {#each shown.edges as edge, index (index)}
+        {@const style = styleOf(edge)}
+        {@const colour = colourOf(style)}
         <path
           class="link"
           d={edge.path}
-          marker-end={edge.directed ? `url(#${markerId})` : undefined}
+          style:stroke={colour}
+          style:stroke-width={widthOf(style)}
+          stroke-dasharray={style?.dashed ? '6 4' : undefined}
+          marker-end={edge.directed ? `url(#${markerId}-${colours.indexOf(colour)})` : undefined}
         />
+        {#if edge.id}
+          <!-- A wider, invisible line along a link component, so it can be clicked and selected. -->
+          <path
+            class="hit"
+            d={edge.path}
+            data-sv-node={edge.id}
+            data-sv-label={style?.label ?? edge.link.replace(' -> ', ' → ').replace(' - ', ' – ')}
+          />
+        {/if}
+        {#if style?.label}
+          <text class="label" x={edge.middle.x} y={edge.middle.y}>{style.label}</text>
+        {/if}
       {/each}
     </svg>
   {/if}
@@ -302,7 +375,19 @@
     stroke: var(--sv-muted);
     stroke-width: 1.5;
   }
-  .links .head {
+  .links .hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 12px;
+    pointer-events: stroke;
+  }
+  .links .label {
+    font-size: 0.75em;
     fill: var(--sv-muted);
+    text-anchor: middle;
+    dominant-baseline: central;
+    paint-order: stroke;
+    stroke: var(--sv-surface);
+    stroke-width: 4px;
   }
 </style>

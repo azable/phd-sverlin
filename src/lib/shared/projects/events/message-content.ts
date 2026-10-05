@@ -18,7 +18,7 @@ export const presentationReferenceSegmentSchema = v.strictObject({
 /**
  * A rendered element's id within one step of a presentation. Only Sverlin presentations support
  * selection; their ids are a node's tag position (line:column), then #n for its nth render, then
- * /index for each item a collection drew itself, as in 12:5#2/3.
+ * /index for each item a collection drew itself, as in 12:5#2/3. A <Link> has an id the same way.
  */
 export const elementIdSchema = v.pipe(
   v.string(),

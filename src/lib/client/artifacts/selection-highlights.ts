@@ -1,5 +1,5 @@
 /**
- * CodeMirror highlights for the <Node> tags behind elements a participant selected in a
+ * CodeMirror highlights for the <Node> and <Link> tags behind elements a participant selected in a
  * presentation: a tint on the lines each tag spans and a mark over the tag itself.
  *
  * @packageDocumentation
@@ -32,7 +32,9 @@ export function highlightRanges(
   for (const { line, column } of highlights) {
     if (line < 1 || line > state.doc.lines) continue;
     const from = state.doc.line(line).from + column - 1;
-    if (state.doc.sliceString(from, from + 5) !== '<Node') continue;
+    // A selection names a node or a link component.
+    const tag = state.doc.sliceString(from, from + 5);
+    if (tag !== '<Node' && tag !== '<Link') continue;
     ranges.set(from, { from, to: tagEnd(state.doc.sliceString(from, from + 4000)) + from });
   }
   return [...ranges.values()].sort((a, b) => a.from - b.from);
@@ -51,7 +53,7 @@ function tagEnd(text: string): number {
     else if (depth === 0 && (character === '"' || character === "'")) quote = character;
     else if (depth === 0 && character === '>') return index + 1;
   }
-  return '<Node'.length;
+  return '<Node'.length; // '<Link' is as long
 }
 
 function decorations(state: EditorState, highlights: readonly SourceHighlight[]): DecorationSet {

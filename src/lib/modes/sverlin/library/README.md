@@ -1,6 +1,6 @@
 # sverlin component library
 
-The component `Node` is already in scope in every component; use it without importing. Never write `import` statements, and never declare your own variables or components named `Node`. Build every part of a visualization from nodes; the page already has a theme and a frame that arranges the view's top-level nodes in a column.
+The components `Node` and `Link` are already in scope in every component; use them without importing. Never write `import` statements, and never declare your own variables or components named `Node` or `Link`. Build every part of a visualization from nodes; the page already has a theme and a frame that arranges the view's top-level nodes in a column.
 
 Nodes say nothing about what a structure means: a node with items laid out as a row can show an array, a list of linked nodes, a queue, or anything else. Decide the meaning from the participant's request, and when they leave it open, express the open choice as a design value so the two presentations of a pair can show different interpretations.
 
@@ -110,12 +110,11 @@ A matrix needs no snippet: `<Node items={grid} layout="column" nested="row" />` 
 
 ## Free layout, links, and relations
 
-`layout="free"` places a node's children by layout instead of in a line or grid: use it for linked structures such as linked lists, trees, and graphs, and for groups whose arrangement is open. The children are kept clear of each other and gathered compactly, starting from the presentation's seed, so a pair shows two arrangements while every presentation draws the same way each time. A node hugs its children whatever its layout.
+`layout="free"` places a node's children by layout instead of in a line or grid: use it for linked structures such as linked lists, trees, and graphs, joined by `<Link>` components (below), and for groups whose arrangement is open, with or without links. The children are kept clear of each other and gathered compactly, starting from the presentation's seed, so a pair shows two arrangements while every presentation draws the same way each time. A node hugs its children whatever its layout.
 
-- `key`: a name for a child that its parent's links and relations refer to, such as `<Node key="a" value={3} />`. Every direct child is placed, keyed or not; put content that belongs together, such as a value and its index, in one child node.
-- `links`: an array of strings, `'a -> b'` for an arrow from a to b or `'a - b'` for a line, such as `links={edges.map(([from, to]) => from + ' -> ' + to)}`. Links are drawn in any layout and pull linked children together in a free one. An arrow attaches to the node its key names: give the key to the value inside a child, or to a child holding one value among labels (such as a value with an index above and a pointer name below), and the arrow meets the value, not the labels. With a `flow`, a chain of links (each node with one link in and one out) runs straight.
+- `key`: a name for a child that its parent's links and relations refer to, such as `<Node key="a" value={3} />`. Every direct child is placed, keyed or not; put content that belongs together, such as a value and its index, in one child node. A link attaches to the node its key names: give the key to the value inside a child, or to a child holding one value among labels (such as a value with an index above and a pointer name below), and the arrow meets the value, not the labels.
 - `constraints`: an array of relations between children, each `'a relation b'`: `above`, `below`, `leftOf`, and `rightOf` place a directly above, below, left of, or right of b, centred on it and one gap away, and `sameRow` and `sameColumn` centre a and b on one horizontal or vertical line in either order. They work in free layouts, and in rows and columns as long as they agree with the line. Use relations for what the picture must show, such as a pointer label above its node or a caption below the structure, and leave the rest to the layout.
-- `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree.
+- `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree. A chain of links (each node with one link in and one out) then runs straight.
 - `chain`: when a free layout's links form a chain or a cycle, such as a linked list, its shape: `'line'`, `'snake'` (rows read back and forth), `'wave'`, `'arc'`, `'ring'`, or `'scatter'` (free positions that keep each node near the next). Unset, every presentation draws a shape that suits the space it has and stretches it to fill that space, and arrows curve round other nodes and labels.
 - `curve`: `'straight'` or `'curved'`, whether arrows prefer to run straight or to curve; unset, each presentation draws it.
 - `layoutSeed`: keeps this node's layout of its children the same in every presentation. Each arrangement draws its shape, spacing, and curves from a seed of its own, which selections report with the element; when the participant likes a layout ("keep this layout but …"), set `layoutSeed` on the node that arranges it to the reported seed, so that layout stays while everything else still varies. Pin `chain` or `curve` only if the participant names them.
@@ -123,15 +122,35 @@ A matrix needs no snippet: `<Node items={grid} layout="column" nested="row" />` 
 Leave `chain` and `flow` unset, or draw them in the design block, and draw which relations to include, so presentations differ until the participant says what they prefer; fix them only when asked, such as for a list that must run left to right.
 
 ```svelte
-<Node
-  layout="free"
-  links={[...next.map(([from, to]) => from + ' -> ' + to), 'head -> ' + first]}
-  constraints={['head above ' + first]}
-  flow="x"
->
+<Node layout="free" constraints={['head above ' + first]} flow="x">
   {#each nodes as node (node.id)}
     <Node key={node.id} value={node.value} fill={node.id === current ? 'amber' : undefined} />
   {/each}
+  {#each next as [from, to]}<Link {from} {to} />{/each}
   <Node key="head" size="small" color="neutral">head</Node>
+  <Link from="head" to={first} />
+</Node>
+```
+
+## Link
+
+`<Link from="a" to="b" />` draws an arrow from the child keyed `a` to the child keyed `b`. Put links among the children of the node whose children they join, beside the nodes they connect; they take no space, and the node lays its children out with them (a node with links and no `layout` is laid out freely). Each link is a component of its own, so a participant can select it and refer to it in feedback, just as they can a node.
+
+- `from` and `to`: the keys of the two nodes, or of nodes inside them (see `key` above).
+- `directed`: `false` for a plain line instead of an arrow.
+- `dashed`, `stroke` (a palette name or CSS colour), and `strokeWidth` (`'thin'`, `'thick'`, or pixels): how it is drawn.
+- `label`: a short text shown at the middle of the link, such as `next` or `head`.
+- `curve`: `'straight'` or `'curved'` for this link alone.
+
+Links can come and go with the steps: wrap one in `{#if}` to show it only while it matters, such as the pointer being followed. Its place is kept across the animation, so nothing moves when it appears.
+
+```svelte
+<Node layout="free">
+  {#each nodes as node, index (node.id)}
+    <Node key={node.id} value={node.value} />
+    {#if index > 0}<Link from={nodes[index - 1].id} to={node.id} label="next" />{/if}
+  {/each}
+  <Node key="head" size="small" color="neutral">head</Node>
+  <Link from="head" to={nodes[0].id} dashed />
 </Node>
 ```

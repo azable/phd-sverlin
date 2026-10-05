@@ -212,12 +212,12 @@ export function routeCurve(
   obstacles: readonly Box[],
   preference: readonly number[],
   ends: { from?: Surround; to?: Surround } = {}
-): { path: string; start: Point; end: Point } {
+): { path: string; start: Point; end: Point; halfway: Point } {
   const centre = (box: Box) => ({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 });
   const [p, q] = [centre(from), centre(to)];
   const distance = Math.hypot(q.x - p.x, q.y - p.y) || 1;
   const normal = { x: -(q.y - p.y) / distance, y: (q.x - p.x) / distance };
-  let best: { path: string; start: Point; end: Point; hits: number } | undefined;
+  let best: { path: string; start: Point; end: Point; halfway: Point; hits: number } | undefined;
   for (const bend of preference) {
     const offset = { x: normal.x * bend * distance, y: normal.y * bend * distance };
     const c1 = { x: p.x + (q.x - p.x) / 3 + offset.x, y: p.y + (q.y - p.y) / 3 + offset.y };
@@ -240,13 +240,14 @@ export function routeCurve(
         path: `M${round(start.x)},${round(start.y)} C${round(c1.x)},${round(c1.y)} ${round(c2.x)},${round(c2.y)} ${round(end.x)},${round(end.y)}`,
         start,
         end,
+        halfway: cubicAt(start, c1, c2, end, 0.5),
         hits
       };
     }
     if (hits === 0) break;
   }
-  const { path, start, end } = best as NonNullable<typeof best>;
-  return { path, start, end };
+  const { path, start, end, halfway } = best as NonNullable<typeof best>;
+  return { path, start, end, halfway };
 }
 
 function cubicAt(a: Point, b: Point, c: Point, d: Point, t: number): Point {

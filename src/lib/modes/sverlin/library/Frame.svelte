@@ -49,10 +49,12 @@
   const memory = layoutMemoryContext();
 
   // The top-level nodes form a column or row by CSS, or are placed by constraint layout when the
-  // arrangement is free or the design adds relations or links between them.
-  const rootLayout = $derived(settings.layout ?? drawn?.frame.layout ?? 'column');
+  // arrangement is free, the design relates them, or <Link> components join them.
+  const rootLayout = $derived(
+    settings.layout ?? (settings.linked ? 'free' : (drawn?.frame.layout ?? 'column'))
+  );
   const rootSolved = $derived<Template | undefined>(
-    rootLayout === 'free' || settings.constraints?.length || settings.links?.length
+    rootLayout === 'free' || settings.constraints?.length || settings.linked
       ? rootLayout
       : undefined
   );
@@ -259,7 +261,10 @@
       if (!element) return [];
       // innerText follows layout, so text in separate boxes stays separate words.
       const text = (element.innerText || element.textContent || '').replace(/\s+/gu, ' ').trim();
-      const typed = [element.dataset.svType, text].filter(Boolean).join(' ') || 'node';
+      // A link has no text of its own, so it brings a label: its own, or the keys it joins.
+      const typed =
+        element.dataset.svLabel ??
+        ([element.dataset.svType, text].filter(Boolean).join(' ') || 'node');
       const label = typed.length > maxLabel ? `${typed.slice(0, maxLabel - 1)}…` : typed;
       return [{ id, label, layouts: layoutsOf(element) }];
     });
@@ -514,7 +519,6 @@
           <Arranged
             template={rootSolved}
             align={settings.align ?? drawn?.frame.align ?? 'center'}
-            links={settings.links}
             constraints={settings.constraints}
             gap={drawn?.gap ?? 'medium'}
             scope="frame"
