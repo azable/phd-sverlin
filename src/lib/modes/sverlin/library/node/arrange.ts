@@ -26,7 +26,13 @@ export type ArrangeResult = {
   height: number;
   /** Links and constraints that were ignored, with why. */
   problems: string[];
+  /** Each child's centre where the solver left it, by key, to start a later layout from. */
+  centres: Record<string, Point>;
+  /** The top-left of everything placed, in the solver's coordinates. */
+  origin: Point;
 };
+
+export type Point = { x: number; y: number };
 
 /** The arrangements the solver places: free, or a row or column with links or relations. */
 export type Template = 'free' | 'row' | 'column';
@@ -48,7 +54,28 @@ export type ArrangeOptions = {
   gap: number;
   /** A random number in [0, 1) for a key, or undefined to start every child at the centre. */
   random?: (key: string) => number;
+  /**
+   * Centres to start children from, by key, such as where the previous step left them: a warm start
+   * keeps whatever has not changed in place. Children without one start from `random`.
+   */
+  starts?: Readonly<Record<string, Point>>;
+  /**
+   * Children to hold at their start, such as those unchanged since the previous step, so only what
+   * changed moves.
+   */
+  still?: ReadonlySet<string>;
+  /**
+   * Where links attach, by key, when not to a whole child: a node inside a child, such as the
+   * value cell of a column that also holds labels.
+   */
+  anchors?: Readonly<Record<string, Anchor>>;
 };
+
+/** A box a link attaches to: inside child `box`, relative to that child's top-left. */
+export type Anchor = { box: number; x: number; y: number; width: number; height: number };
+
+// The least room left for an arrow between the boxes it joins, so it is always visible.
+const arrowRoom = 28;
 
 const relations = ['above', 'below', 'leftOf', 'rightOf', 'sameRow', 'sameColumn'] as const;
 type Relation = (typeof relations)[number];
@@ -56,7 +83,7 @@ type Relation = (typeof relations)[number];
 // The area starting positions are spread over; only its proportions matter.
 const startArea = { width: 800, height: 500 };
 
-type Separation = { axis: 'x' | 'y'; left: number; right: number; gap: number; equality: true };
+type Separation = { axis: 'x' | 'y'; left: number; right: number; gap: number; equality?: true };
 type Alignment = {
   type: 'alignment';
   axis: 'x' | 'y';
@@ -71,7 +98,21 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     if (position === undefined) problems.push(`"${source}" names no node with key "${key}".`);
     return position;
   };
+  // A link's end: a keyed anchor inside a child, or a whole keyed child.
+  const anchorOf = (key: string, source: string): Anchor | undefined => {
+    const anchor = options.anchors?.[key];
+    if (anchor) return anchor;
+    const box = at(key, source);
+    return box === undefined
+      ? undefined
+      : { box, x: 0, y: 0, width: boxes[box].width, height: boxes[box].height };
+  };
   const extent = (axis: 'x' | 'y') => (axis === 'x' ? 'width' : 'height');
+  // How far an anchor's centre lies from its child's centre along an axis.
+  const offsetOf = (anchor: Anchor, axis: 'x' | 'y') =>
+    axis === 'x'
+      ? anchor.x + anchor.width / 2 - boxes[anchor.box].width / 2
+      : anchor.y + anchor.height / 2 - boxes[anchor.box].height / 2;
   // Box centres a gap apart along an axis, exactly.
   const apart = (axis: 'x' | 'y', left: number, right: number): Separation => ({
     axis,
@@ -116,11 +157,11 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
       problems.push(`"${text}" is not a link such as "a -> b".`);
       return [];
     }
-    const source = at(match[1], text);
-    const target = at(match[3], text);
-    return source === undefined || target === undefined || source === target
+    const from = anchorOf(match[1], text);
+    const to = anchorOf(match[3], text);
+    return !from || !to || from.box === to.box
       ? []
-      : [{ source, target, directed: match[2] === '->' }];
+      : [{ source: from.box, target: to.box, from, to, directed: match[2] === '->' }];
   });
 
   const related = (options.constraints ?? []).flatMap((text) => {
@@ -157,30 +198,86 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
       return crossing ? [`${a} ${b}`, `${b} ${a}`] : [];
     })
   );
-  const laidLinks = links.map(({ source, target, directed }) => {
-    const [from, to] = [boxes[source], boxes[target]];
-    const along = (from[flowExtent] + to[flowExtent]) / 2 + 3 * options.gap;
+  const room = Math.max(3 * options.gap, arrowRoom);
+  const laidLinks = links.map(({ source, target, from, to, directed }) => {
+    const along = (from[flowExtent] + to[flowExtent]) / 2 + room;
     const ideal = options.flow
       ? along
-      : (Math.max(from.width, from.height) + Math.max(to.width, to.height)) / 2 + 3 * options.gap;
+      : (Math.max(from.width, from.height) + Math.max(to.width, to.height)) / 2 + room;
     const placed = across.has(`${source} ${target}`);
-    return { source, target, ideal, along: directed && !placed ? along : 0, placed };
+    return { source, target, from, to, ideal, along, directed, placed };
   });
   // A link between boxes a relation already places is drawn but not laid out; otherwise its graph
   // distances would pull the rest askew.
-  const solvedLinks = laidLinks.filter(({ placed }) => !placed);
+  const solvedLinks: { source: number; target: number; ideal: number }[] = laidLinks.filter(
+    ({ placed }) => !placed
+  );
 
-  const nodes: { width: number; height: number; x?: number; y?: number }[] = boxes.map((box) => ({
-    // The gap is added to each box, so overlap removal keeps boxes that far apart.
-    width: box.width + options.gap,
-    height: box.height + options.gap,
-    ...(options.random
-      ? {
-          x: options.random(`${box.key}.x`) * startArea.width,
-          y: options.random(`${box.key}.y`) * startArea.height
-        }
-      : {})
-  }));
+  // Along a flow, each directed link's target anchor sits at least a link's length further along
+  // than its source anchor, so arrows run with the flow. A link that closes a cycle cannot point
+  // forward too, so it is left free; and links forming a simple chain (one out, one in) are lined
+  // up on their anchors, so a list runs straight.
+  const flowing: (Separation | Alignment)[] = [];
+  if (options.flow && options.template === 'free') {
+    const axis = options.flow;
+    const cross = axis === 'x' ? 'y' : 'x';
+    const forward = laidLinks.filter(
+      ({ directed, placed }, i) => directed && !placed && !closesCycle(laidLinks, i)
+    );
+    const outs = new Map<number, number>();
+    const ins = new Map<number, number>();
+    for (const { source, target } of forward) {
+      outs.set(source, (outs.get(source) ?? 0) + 1);
+      ins.set(target, (ins.get(target) ?? 0) + 1);
+    }
+    for (const { source, target, from, to, along } of forward) {
+      flowing.push({
+        axis,
+        left: source,
+        right: target,
+        gap: along + offsetOf(from, axis) - offsetOf(to, axis)
+      });
+      if (outs.get(source) === 1 && ins.get(target) === 1)
+        flowing.push({
+          type: 'alignment',
+          axis: cross,
+          offsets: [
+            { node: source, offset: 0 },
+            { node: target, offset: offsetOf(from, cross) - offsetOf(to, cross) }
+          ]
+        });
+    }
+  }
+
+  // A warm start, from where children were before, keeps them there; a child new to it starts near
+  // the others, by an amount the seed varies, instead of anywhere in the start area.
+  const known = boxes.flatMap((box) => options.starts?.[box.key] ?? []);
+  const warm = known.length > 0;
+  const middle = warm
+    ? {
+        x: known.reduce((sum, { x }) => sum + x, 0) / known.length,
+        y: known.reduce((sum, { y }) => sum + y, 0) / known.length
+      }
+    : { x: startArea.width / 2, y: startArea.height / 2 };
+  const nodes: { width: number; height: number; x?: number; y?: number; fixed?: number }[] =
+    boxes.map((box) => ({
+      // The gap is added to each box, so overlap removal keeps boxes that far apart.
+      width: box.width + options.gap,
+      height: box.height + options.gap,
+      ...(options.still?.has(box.key) && options.starts?.[box.key] ? { fixed: 1 } : {}),
+      ...(options.starts?.[box.key] ??
+        (options.random
+          ? warm
+            ? {
+                x: middle.x + (options.random(`${box.key}.x`) - 0.5) * box.width,
+                y: middle.y + (options.random(`${box.key}.y`) - 0.5) * box.height
+              }
+            : {
+                x: options.random(`${box.key}.x`) * startArea.width,
+                y: options.random(`${box.key}.y`) * startArea.height
+              }
+          : {}))
+    }));
 
   // Nothing pulls separate groups together (children joined by links or relations count as one), so
   // in a free arrangement one child of each group is tied to an invisible hub: they gather round it
@@ -194,16 +291,14 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     nodes.push({
       width: 0.01,
       height: 0.01,
-      ...(options.random ? { x: startArea.width / 2, y: startArea.height / 2 } : {})
+      ...(warm || options.random ? middle : {})
     });
     for (const member of leaders) {
       const { width, height } = boxes[member];
       solvedLinks.push({
         source: hub,
         target: member,
-        ideal: Math.max(width, height) / 2 + options.gap,
-        along: 0,
-        placed: false
+        ideal: Math.max(width, height) / 2 + options.gap
       });
     }
   }
@@ -213,15 +308,14 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
       .size([startArea.width, startArea.height])
       .nodes(nodes)
       .links(solvedLinks)
-      .constraints([...template, ...constraints])
+      .constraints([...template, ...constraints, ...flowing])
       .avoidOverlaps(true)
       .handleDisconnected(false)
       .linkDistance((link) => (link as unknown as { ideal: number }).ideal);
-    if (options.flow && options.template === 'free' && links.some(({ directed }) => directed))
-      layout.flowLayout(options.flow, (link: { along: number }) => link.along);
     // Iterations without constraints, then with the view's, then with all; running on to
-    // convergence is synchronous here, and the same input always gives the same result.
-    layout.start(20, 20, 20, 0, true, false);
+    // convergence is synchronous here, and the same input always gives the same result. A warm
+    // start skips the unconstrained iterations, which would scatter what is already in place.
+    layout.start(warm ? 0 : 20, 20, 20, 0, true, false);
   }
 
   const centres = nodes.slice(0, boxes.length).map(({ x = 0, y = 0 }) => ({ x, y }));
@@ -236,15 +330,24 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
   const width = Math.max(0, ...boxes.map((box, i) => placements[i].x + box.width));
   const height = Math.max(0, ...boxes.map((box, i) => placements[i].y + box.height));
 
-  const edges = links.map(({ source, target, directed }) => {
-    const from = boxOf(boxes[source], placements[source]);
-    const to = boxOf(boxes[target], placements[target]);
+  // Arrows run between anchors, from edge to edge.
+  const edges = links.map(({ from: tail, to: head, directed }) => {
+    const from = anchorRect(tail, placements[tail.box]);
+    const to = anchorRect(head, placements[head.box]);
     const start = edgePoint(from, to.cx, to.cy);
     const end = edgePoint(to, from.cx, from.cy);
     return { x1: start.x, y1: start.y, x2: end.x, y2: end.y, directed };
   });
 
-  return { placements, edges, width, height, problems };
+  return {
+    placements,
+    edges,
+    width,
+    height,
+    problems,
+    centres: Object.fromEntries(boxes.map((box, i) => [box.key, centres[i]])),
+    origin: { x: left, y: top }
+  };
 }
 
 /** One child from each group the links connect, counting an unlinked child as its own group. */
@@ -258,13 +361,33 @@ function groupLeaders(count: number, links: readonly { source: number; target: n
 
 type Rect = { cx: number; cy: number; halfWidth: number; halfHeight: number };
 
-function boxOf(box: ArrangeBox, placement: Placement): Rect {
+function anchorRect(anchor: Anchor, placement: Placement): Rect {
   return {
-    cx: placement.x + box.width / 2,
-    cy: placement.y + box.height / 2,
-    halfWidth: box.width / 2,
-    halfHeight: box.height / 2
+    cx: placement.x + anchor.x + anchor.width / 2,
+    cy: placement.y + anchor.y + anchor.height / 2,
+    halfWidth: anchor.width / 2,
+    halfHeight: anchor.height / 2
   };
+}
+
+/** Whether directed link i returns to its source along earlier directed links, closing a cycle. */
+function closesCycle(
+  links: readonly { source: number; target: number; directed: boolean; placed: boolean }[],
+  i: number
+): boolean {
+  const next = new Map<number, number[]>();
+  for (const { source, target, directed, placed } of links.slice(0, i))
+    if (directed && !placed) next.set(source, [...(next.get(source) ?? []), target]);
+  const seen = new Set<number>();
+  const stack = [links[i].target];
+  while (stack.length) {
+    const at = stack.pop() as number;
+    if (at === links[i].source) return true;
+    if (seen.has(at)) continue;
+    seen.add(at);
+    stack.push(...(next.get(at) ?? []));
+  }
+  return false;
 }
 
 /** Where the line from a box's centre towards a point leaves the box. */

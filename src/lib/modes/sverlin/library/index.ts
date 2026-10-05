@@ -27,3 +27,4 @@ export type {
   StrokeWidth,
   Weight
 } from './node/props';
+export type { LayoutMemory } from './type-context';

@@ -140,3 +140,88 @@ describe('arrangement templates', () => {
     expect(new Set(layouts).size).toBeGreaterThan(1);
   });
 });
+
+describe('links along a flow', () => {
+  // Columns of a value cell with a label below one of them, as a list with a "current" label.
+  const columns: ArrangeBox[] = [
+    { key: 'n0', width: 40, height: 40 },
+    { key: 'n1', width: 50, height: 62 },
+    { key: 'n2', width: 40, height: 40 }
+  ];
+  const anchors = {
+    n0: { box: 0, x: 0, y: 0, width: 40, height: 40 },
+    n1: { box: 1, x: 5, y: 0, width: 40, height: 40 },
+    n2: { box: 2, x: 0, y: 0, width: 40, height: 40 }
+  };
+  const chain = arrange(columns, {
+    template: 'free',
+    links: ['n0 -> n1', 'n1 -> n2'],
+    flow: 'x',
+    gap: 6,
+    anchors,
+    random: keyedRandom(3, 'list')
+  });
+
+  it('runs a chain straight on its anchors, with visible arrows between them', () => {
+    const centre = (key: 'n0' | 'n1' | 'n2', index: number) => ({
+      x: chain.placements[index].x + anchors[key].x + 20,
+      y: chain.placements[index].y + anchors[key].y + 20
+    });
+    const [a, b, c] = [centre('n0', 0), centre('n1', 1), centre('n2', 2)];
+    expect(Math.abs(a.y - b.y)).toBeLessThan(0.5);
+    expect(Math.abs(b.y - c.y)).toBeLessThan(0.5);
+    // Anchors sit at least an arrow's room apart, edge to edge.
+    expect(b.x - a.x - 40).toBeGreaterThanOrEqual(28 - 0.5);
+    expect(c.x - b.x - 40).toBeGreaterThanOrEqual(28 - 0.5);
+    // Arrows leave and meet the anchors' edges, not the taller column's.
+    const [first] = chain.edges;
+    expect(first.x1).toBeCloseTo(a.x + 20, 0);
+    expect(first.y1).toBeCloseTo(a.y, 0);
+    expect(first.x2).toBeCloseTo(b.x - 20, 0);
+    expect(first.y2).toBeCloseTo(b.y, 0);
+  });
+
+  it('lays out a cycle, leaving the link that closes it free', () => {
+    const cycle = arrange(columns, {
+      template: 'free',
+      links: ['n0 -> n1', 'n1 -> n2', 'n2 -> n0'],
+      flow: 'x',
+      gap: 6,
+      anchors,
+      random: keyedRandom(3, 'list')
+    });
+    expect(cycle.edges).toHaveLength(3);
+    expect(cycle.placements[1].x).toBeGreaterThan(cycle.placements[0].x);
+    expect(cycle.placements[2].x).toBeGreaterThan(cycle.placements[1].x);
+  });
+});
+
+describe('layouts across steps', () => {
+  const base = { template: 'free' as const, gap: 10, random: keyedRandom(4, 'frame') };
+
+  it('keeps children that have not changed exactly where they were, moving only what changed', () => {
+    const before = arrange(boxes, base);
+    // The note grows; everything else is the same size as before.
+    const grown = boxes.map((box) => (box.key === 'note' ? { ...box, width: 260 } : box));
+    const after = arrange(grown, {
+      ...base,
+      starts: before.centres,
+      still: new Set(boxes.filter(({ key }) => key !== 'note').map(({ key }) => key))
+    });
+    for (const key of ['a', 'b', 'c', 'head']) {
+      expect(after.centres[key].x).toBeCloseTo(before.centres[key].x, 3);
+      expect(after.centres[key].y).toBeCloseTo(before.centres[key].y, 3);
+    }
+    const note = after.placements[4];
+    const others = after.placements
+      .slice(0, 4)
+      .map((placement, i) => ({ ...placement, ...grown[i] }));
+    for (const other of others)
+      expect(
+        note.x + 260 <= other.x + 0.5 ||
+          other.x + other.width <= note.x + 0.5 ||
+          note.y + 32 <= other.y + 0.5 ||
+          other.y + other.height <= note.y + 0.5
+      ).toBe(true);
+  });
+});

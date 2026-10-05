@@ -28,24 +28,33 @@
   let iframe = $state<HTMLIFrameElement>();
   // The iframe fills its pane exactly, however short: the canvas inside fits itself to the iframe, so
   // an iframe taller than its pane would be clipped, cutting off the canvas.
-  // Each step reloads the frame, so the canvas view (zoom and pan) it reports is kept here, outside
-  // reactive state, and handed to the next document. A different presentation starts afresh.
-  let view: CanvasView | undefined;
-  let viewFor = '';
+  // The page loads once per presentation, with the step and selection current then;
+  // later steps are sent to it as messages, so it never reloads while stepping.
   const document = $derived.by(() => {
-    if (viewFor !== presentation.presentationId) {
-      viewFor = presentation.presentationId;
-      view = undefined;
-    }
-    // A reload shows the selection current at that moment; later changes are sent as messages.
-    const selected = untrack(() => selection);
+    void presentation.presentationId;
     return sandboxDocument(
       '',
       presentation.javascript.text,
-      step,
+      untrack(() => step),
       presentation.seed,
-      view,
-      selected
+      undefined,
+      untrack(() => selection)
+    );
+  });
+  // Whether the page has loaded and listens for steps; a new document starts unloaded.
+  let loaded = $state(false);
+  $effect(() => {
+    void document;
+    loaded = false;
+  });
+
+  $effect(() => {
+    const shown = step;
+    if (!loaded) return;
+    // The step's selection is sent with it, so the new step shows it from the start.
+    iframe?.contentWindow?.postMessage(
+      { type: 'sverlin:step', step: shown, selection: untrack(() => [...selection]) },
+      '*'
     );
   });
 
@@ -62,6 +71,10 @@
     const receive = (event: MessageEvent) => {
       if (!iframe || event.source !== iframe.contentWindow) return;
       const data = event.data as { type?: unknown } & Partial<Record<keyof CanvasView, unknown>>;
+      if (data?.type === 'sverlin:loaded') {
+        loaded = true;
+        return;
+      }
       if (data?.type === 'sverlin:selection') {
         const parsed = v.safeParse(selectionMessage, data);
         if (parsed.success) onSelectionChange(parsed.output.elements);
@@ -69,8 +82,7 @@
       }
       const numbers = [data?.zoom, data?.panX, data?.panY];
       if (data?.type !== 'sverlin:view' || !numbers.every(Number.isFinite)) return;
-      view = { zoom: Number(data.zoom), panX: Number(data.panX), panY: Number(data.panY) };
-      onViewChange(view);
+      onViewChange({ zoom: Number(data.zoom), panX: Number(data.panX), panY: Number(data.panY) });
     };
     addEventListener('message', receive);
     return () => removeEventListener('message', receive);

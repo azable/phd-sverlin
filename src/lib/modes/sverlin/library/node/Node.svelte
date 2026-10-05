@@ -13,6 +13,7 @@
   import {
     defaultsContext,
     markRendering,
+    layoutMemoryContext,
     nodeIdsContext,
     rendererFor,
     typeContext
@@ -144,6 +145,14 @@
   // The id a participant's selection refers to this node by (see provideNodeIds).
   const nodeIds = nodeIdsContext();
   const id = untrack(() => __id ?? (__ref ? nodeIds?.claim(__ref) : undefined));
+  // The largest size this node reaches at any step (see LayoutMemory), kept as its least size so
+  // that changing content never moves anything around it.
+  const memory = layoutMemoryContext();
+  const reserved = untrack(() =>
+    id && memory && !memory.measuring ? memory.reserved.get(id) : undefined
+  );
+  const least = (scale: string | undefined, pixels: number | undefined) =>
+    pixels === undefined ? scale : scale ? `max(${scale}, ${pixels}px)` : `${pixels}px`;
   // A typed value node draws through its type's renderer, if the view defines one. Resolved once:
   // each step mounts afresh, and the renderer is marked so nodes inside it never call it again.
   const rendered = untrack(() =>
@@ -273,8 +282,8 @@
     style:border-width={resolvedStrokeWidth}
     style:border-radius={radii[radius ?? preset.radius ?? 'none']}
     style:padding={measure(spacings, padding ?? preset.padding)}
-    style:min-width={measure(minSizes, minSize ?? preset.minSize)}
-    style:min-height={measure(minSizes, minSize ?? preset.minSize)}
+    style:min-width={least(measure(minSizes, minSize ?? preset.minSize), reserved?.width)}
+    style:min-height={least(measure(minSizes, minSize ?? preset.minSize), reserved?.height)}
     style:opacity={typeof opacity === 'number' && Number.isFinite(opacity)
       ? Math.min(Math.max(opacity, 0), 1)
       : undefined}
