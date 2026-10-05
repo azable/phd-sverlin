@@ -30,6 +30,8 @@ export type FrameSettings = {
   constraints?: string[];
   /** Links between top-level nodes by key, as for a node's links. */
   links?: string[];
+  /** A seed for the top-level arrangement alone, to keep a free layout the participant liked. */
+  layoutSeed?: number;
 };
 
 /** The arrangements the page frame offers its top-level nodes. */

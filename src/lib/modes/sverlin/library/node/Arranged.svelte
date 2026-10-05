@@ -11,10 +11,17 @@
     arrangementParentContext,
     layoutMemoryContext,
     provideArrangementParent,
-    seedContext,
-    type LayoutRecord
+    seedContext
   } from '../type-context';
-  import { arrange, keyedRandom, type Anchor, type ArrangeEdge, type Template } from './arrange';
+  import {
+    arrange,
+    keyedRandom,
+    layoutSeedFor,
+    type Anchor,
+    type ArrangeEdge,
+    type Template
+  } from './arrange';
+  import type { ChainShape } from './chain';
   import { measure, spacings } from './presets';
   import type { Align, Spacing } from './props';
 
@@ -24,6 +31,9 @@
     links = [],
     constraints = [],
     flow,
+    chain,
+    curve,
+    layoutSeed,
     gap,
     scope,
     children
@@ -33,6 +43,14 @@
     links?: readonly string[];
     constraints?: readonly string[];
     flow?: 'x' | 'y';
+    /** The shape a chain of links takes; unset, the seed draws one. */
+    chain?: ChainShape;
+    curve?: 'straight' | 'curved';
+    /**
+     * A seed for this arrangement alone, so a layout a participant liked stays the same in every
+     * presentation.
+     */
+    layoutSeed?: number;
     gap: Spacing;
     /** Keys this arrangement's random starts, such as the node's id. */
     scope: string;
@@ -41,11 +59,21 @@
 
   const seed = seedContext();
   const memory = layoutMemoryContext();
+  // The seed this arrangement draws every choice from: its own pinned layoutSeed, or else one derived
+  // from the presentation's seed and its place, so arrangements differ from each other. Selections
+  // report it, and pinning it as layoutSeed reproduces the layout exactly, wherever the node moves.
+  const drawSeed = $derived(layoutSeed ?? layoutSeedFor(seed, scope));
+
   // Node ids hold : and #, which an SVG fragment reference cannot.
   const markerId = $derived(`sv-arrow-${scope.replace(/[^\w-]/gu, '_')}`);
   const parent = arrangementParentContext();
   let host = $state<HTMLDivElement>();
-  let result = $state<{ width: number; height: number; edges: ArrangeEdge[] }>();
+  let result = $state<{
+    width: number;
+    height: number;
+    edges: ArrangeEdge[];
+    choices: { chain?: string; curve: 'straight' | 'curved' };
+  }>();
   // Bumped when a nested arrangement settles, to lay out again with its new size.
   let revision = $state(0);
   let pending = false;
@@ -59,6 +87,30 @@
       });
     }
   });
+
+  /**
+   * The width to height of the space this arrangement has: the frame's inside, less what the other
+   * top-level nodes take when the root is a column or row, so shapes fill what is left.
+   */
+  function spaceAspect(): number {
+    const frame = host?.closest<HTMLElement>('.sv-frame');
+    if (!frame || !host) return 16 / 9;
+    const style = getComputedStyle(frame);
+    let width = frame.clientWidth - parseFloat(style.paddingLeft) * 2;
+    let height = frame.clientHeight - parseFloat(style.paddingTop) * 2;
+    const flow = host.closest<HTMLElement>('.sv-flow');
+    const top = flow
+      ? [...flow.children].find((child) => child.contains(host as Element))
+      : undefined;
+    if (flow && top) {
+      const others = [...flow.children].filter((child) => child !== top) as HTMLElement[];
+      const gap = parseFloat(getComputedStyle(flow).rowGap) || 0;
+      if (flow.style.flexDirection === 'row')
+        width -= others.reduce((sum, child) => sum + child.offsetWidth + gap, 0);
+      else height -= others.reduce((sum, child) => sum + child.offsetHeight + gap, 0);
+    }
+    return Math.max(width, 50) / Math.max(height, 50);
+  }
 
   // Lay out again whenever a child's size changes: a page loaded while hidden measures every child
   // as empty, and children only take their sizes once it is shown.
@@ -86,7 +138,8 @@
     const fontSize = parseFloat(getComputedStyle(host).fontSize) || 16;
     const space = parseFloat(measure(spacings, gap) ?? '0') * fontSize;
     const boxes = elements.map((element, index) => ({
-      key: element.dataset.svKey ?? `#${index}`,
+      // A child without a key is known by its node id, which is the same at every step.
+      key: element.dataset.svKey ?? element.dataset.svNode ?? `#${index}`,
       // Layout sizes, unaffected by the frame's scale; offsetWidth rounds, so a pixel more keeps
       // a fractional width from wrapping once placed.
       width: element.offsetWidth + 1,
@@ -95,6 +148,7 @@
     // Links attach to the node they name: a keyed node inside a child, or, for a keyed child that
     // holds one value cell among labels, that cell, so arrows meet the value and not its labels.
     const anchors: Record<string, Anchor> = {};
+    const parts: Anchor[] = [];
     elements.forEach((element, box) => {
       const frame = element.getBoundingClientRect();
       // Rects are scaled with the frame; the child's own size gives the scale back.
@@ -116,101 +170,66 @@
       );
       if (element.dataset.svKey && cells.length === 1)
         anchors[element.dataset.svKey] = anchor(cells[0]);
+      // The content inside a child, which arrows bend round: its innermost nodes.
+      for (const inner of element.querySelectorAll('[data-sv-node]'))
+        if (!inner.querySelector('[data-sv-node]')) parts.push(anchor(inner));
     });
-    // With layout memory (see LayoutMemory), recording solves each step from the one before, and
-    // showing a step replays its record within the bounds of every step. A step whose children
-    // differ from its record, such as after fonts change, is solved afresh from the record.
-    let remembered = memory?.scopes.get(scope);
-    if (memory && !remembered) memory.scopes.set(scope, (remembered = { steps: new Map() }));
-    const record = memory ? remembered?.steps.get(memory.step) : undefined;
-    const replay =
-      !!memory &&
-      !memory.recording &&
-      !!record &&
-      boxes.length === record.placements.length &&
-      boxes.every(({ key, width, height }) => {
-        const size = record.sizes[key];
-        return size && Math.abs(size.width - width) < 1 && Math.abs(size.height - height) < 1;
+    const options = {
+      template,
+      align,
+      links,
+      constraints,
+      flow,
+      chain,
+      curve,
+      gap: space,
+      aspect: spaceAspect()
+    };
+    // While recording, note what this arrangement contains at this step, by key, so it can be
+    // solved once over every step (see node/span.ts).
+    if (memory?.recording) {
+      let entry = memory.scopes.get(scope);
+      if (!entry) memory.scopes.set(scope, (entry = { inputs: new Map() }));
+      const keyed = (anchor: Anchor) => ({ ...anchor, box: boxes[anchor.box].key });
+      entry.inputs.set(memory.step, {
+        seed: drawSeed,
+        boxes,
+        anchors: Object.fromEntries(Object.entries(anchors).map(([key, a]) => [key, keyed(a)])),
+        parts: parts.map(keyed),
+        options
       });
-    const previous = memory ? remembered?.steps.get(memory.step - 1) : undefined;
-    let laidOut: LayoutRecord;
-    if (replay && record) laidOut = record;
-    else {
+    }
+    // Children go where the solution over every step put them, and only this step's links are
+    // drawn. A child the solution does not know, such as before it is made, is laid out here alone.
+    const span = memory?.scopes.get(scope)?.span;
+    let shown: NonNullable<typeof result>;
+    let placements: { x: number; y: number }[];
+    if (span && boxes.every(({ key }) => span.positions[key])) {
+      placements = boxes.map(({ key }) => span.positions[key]);
+      const present = new Set(links.map((text) => text.trim()));
+      shown = {
+        width: span.width,
+        height: span.height,
+        edges: span.edges.filter(({ link }) => present.has(link.trim())),
+        choices: span.choices
+      };
+    } else {
       const solved = untrack(() =>
-        arrange(boxes, {
-          anchors,
-          template,
-          align,
-          links,
-          constraints,
-          flow,
-          gap: space,
-          random: keyedRandom(seed, scope),
-          starts: memory ? (record ?? previous)?.centres : undefined,
-          // Children the same size as at the previous step stay where they were.
-          still: previous
-            ? new Set(
-                boxes
-                  .filter(({ key, width, height }) => {
-                    const size = previous.sizes[key];
-                    return (
-                      size && Math.abs(size.width - width) < 1 && Math.abs(size.height - height) < 1
-                    );
-                  })
-                  .map(({ key }) => key)
-              )
-            : undefined
-        })
+        arrange(boxes, { ...options, anchors, parts, random: keyedRandom(drawSeed, 'layout') })
       );
       for (const problem of solved.problems) console.warn(`Node layout: ${problem}`);
-      laidOut = {
-        sizes: Object.fromEntries(boxes.map(({ key, width, height }) => [key, { width, height }])),
-        centres: solved.centres,
-        origin: solved.origin,
-        placements: solved.placements,
-        edges: solved.edges
+      placements = solved.placements;
+      shown = {
+        width: solved.width,
+        height: solved.height,
+        edges: solved.edges,
+        choices: solved.choices
       };
-      if (memory?.recording && remembered && boxes.length) {
-        remembered.steps.set(memory.step, laidOut);
-        const right = solved.origin.x + solved.width;
-        const bottom = solved.origin.y + solved.height;
-        const bounds = remembered.bounds;
-        remembered.bounds = bounds
-          ? {
-              left: Math.min(bounds.left, solved.origin.x),
-              top: Math.min(bounds.top, solved.origin.y),
-              right: Math.max(bounds.right, right),
-              bottom: Math.max(bounds.bottom, bottom)
-            }
-          : { left: solved.origin.x, top: solved.origin.y, right, bottom };
-      }
     }
-    // Placed within the bounds of every step, so the arrangement keeps one size and what does not
-    // move between steps stays exactly where it was.
-    const own = {
-      right: Math.max(0, ...boxes.map(({ width }, i) => (laidOut.placements[i]?.x ?? 0) + width)),
-      bottom: Math.max(0, ...boxes.map(({ height }, i) => (laidOut.placements[i]?.y ?? 0) + height))
-    };
-    const bounds = remembered?.bounds;
-    const dx = bounds ? laidOut.origin.x - bounds.left : 0;
-    const dy = bounds ? laidOut.origin.y - bounds.top : 0;
-    const width = bounds ? Math.max(bounds.right - bounds.left, own.right + dx) : own.right;
-    const height = bounds ? Math.max(bounds.bottom - bounds.top, own.bottom + dy) : own.bottom;
     elements.forEach((element, index) => {
-      element.style.left = `${(laidOut.placements[index]?.x ?? 0) + dx}px`;
-      element.style.top = `${(laidOut.placements[index]?.y ?? 0) + dy}px`;
+      element.style.left = `${placements[index].x}px`;
+      element.style.top = `${placements[index].y}px`;
     });
-    const shown = {
-      width,
-      height,
-      edges: laidOut.edges.map(({ x1, y1, x2, y2, directed }) => ({
-        x1: x1 + dx,
-        y1: y1 + dy,
-        x2: x2 + dx,
-        y2: y2 + dy,
-        directed
-      }))
-    };
     const resized =
       untrack(() => result?.width) !== shown.width ||
       untrack(() => result?.height) !== shown.height;
@@ -221,10 +240,18 @@
 
 <div
   class="sv-arranged"
+  data-sv-layout-seed={drawSeed}
+  data-sv-chain={result?.choices.chain}
+  data-sv-curve={result?.choices.curve}
   style:width={result ? `${result.width}px` : undefined}
   style:height={result ? `${result.height}px` : undefined}
   style:visibility={result ? undefined : 'hidden'}
 >
+  <!-- Until laid out, children have room to take their natural width. -->
+  <div class="placed" bind:this={host} style:width={result ? undefined : '10000px'}>
+    {@render children?.()}
+  </div>
+  <!-- Arrows are drawn over the nodes, so filled boxes never hide them. -->
   {#if result?.edges.length}
     <svg class="links" width={result.width} height={result.height} aria-hidden="true">
       <defs>
@@ -237,24 +264,18 @@
           markerHeight="7"
           orient="auto-start-reverse"
         >
-          <path d="M0,0 L10,5 L0,10 z" />
+          <path class="head" d="M0,0 L10,5 L0,10 z" />
         </marker>
       </defs>
       {#each result.edges as edge, index (index)}
-        <line
-          x1={edge.x1}
-          y1={edge.y1}
-          x2={edge.x2}
-          y2={edge.y2}
+        <path
+          class="link"
+          d={edge.path}
           marker-end={edge.directed ? `url(#${markerId})` : undefined}
         />
       {/each}
     </svg>
   {/if}
-  <!-- Until laid out, children have room to take their natural width. -->
-  <div class="placed" bind:this={host} style:width={result ? undefined : '10000px'}>
-    {@render children?.()}
-  </div>
 </div>
 
 <style>
@@ -276,11 +297,12 @@
     overflow: visible;
     pointer-events: none;
   }
-  .links line {
+  .links .link {
+    fill: none;
     stroke: var(--sv-muted);
     stroke-width: 1.5;
   }
-  .links path {
+  .links .head {
     fill: var(--sv-muted);
   }
 </style>

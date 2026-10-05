@@ -1535,6 +1535,9 @@ function validateElementReference(document: ProjectDocument, reference: ElementR
     throw new Error(`Presentation ${reference.presentationId} has no step ${reference.step + 1}.`);
   if (!locateElement(value.source.text, reference.element.id))
     throw new Error(`Element ${reference.element.id} is not a node of that presentation.`);
+  for (const { node } of reference.element.layouts ?? [])
+    if (node !== 'frame' && !locateElement(value.source.text, node))
+      throw new Error(`Layout node ${node} is not a node of that presentation.`);
 }
 
 /** Element references in a message. */

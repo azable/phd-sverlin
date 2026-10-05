@@ -5,7 +5,7 @@
   import { sandboxDocument, type CanvasView } from '../sandbox';
   import type { SelectedElement } from '$lib/client/visualization/visual-selection.svelte';
   import type { BrowserBundlePresentation } from '$lib/shared/presentations';
-  import { elementIdSchema, elementLabelSchema } from '$lib/shared/projects/events/message-content';
+  import { selectedElementSchema } from '$lib/shared/projects/events/message-content';
 
   let {
     presentation,
@@ -61,10 +61,7 @@
   // The page runs authored code, so every selection it reports is checked.
   const selectionMessage = v.object({
     type: v.literal('sverlin:selection'),
-    elements: v.pipe(
-      v.array(v.strictObject({ id: elementIdSchema, label: elementLabelSchema })),
-      v.maxLength(50)
-    )
+    elements: v.pipe(v.array(selectedElementSchema), v.maxLength(50))
   });
 
   $effect(() => {

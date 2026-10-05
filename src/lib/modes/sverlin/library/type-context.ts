@@ -6,6 +6,7 @@
 import { getContext, setContext, type Snippet } from 'svelte';
 
 import type { NodeDefaults, NodeProps, Primitive } from './node/props';
+import type { SpanInput, SpanLayout } from './node/span';
 
 export type TypeContext = {
   /** The atomic type name of item `index` of a container taken from the props, if typed. */
@@ -92,43 +93,27 @@ export function arrangementParentContext(): ArrangementParent | undefined {
   return getContext<ArrangementParent | undefined>('sverlin:arrangement');
 }
 
-/** One arrangement's layout at one step, recorded so any later showing of that step replays it. */
-export type LayoutRecord = {
-  /** Child sizes the layout was made for, by key; a replay needs the same children and sizes. */
-  sizes: Record<string, { width: number; height: number }>;
-  /** Child centres in the solver's coordinates, to start the next step's layout from. */
-  centres: Record<string, { x: number; y: number }>;
-  /** The top-left of everything placed, in the solver's coordinates. */
-  origin: { x: number; y: number };
-  placements: { key: string; x: number; y: number }[];
-  edges: { x1: number; y1: number; x2: number; y2: number; directed: boolean }[];
-};
-
 /**
- * Layouts for every step of a presentation, made once in step order when the page loads: each step
- * starts from the one before, each arrangement keeps the bounds of all its steps, and the root the
- * smallest fit any step needs. Showing a step replays its record, so a seed always gives the same
- * layout for a step, whichever step is shown first, and what does not change stays put.
+ * Layouts for a whole presentation, made when the page loads: every node is measured at every step
+ * and keeps the largest size it reaches; then every step is laid out hidden, recording what each
+ * arrangement contains, and each arrangement is solved once over all of them (see node/span.ts).
+ * Showing a step places children where that solution put them, so a seed always gives the same
+ * layout for a step, whichever step is shown first, and only what changes moves.
  */
 export type LayoutMemory = {
   /** The step being laid out or shown. */
   step: number;
-  /** True while making the records; false when showing a step from them. */
+  /** True while recording what arrangements contain; false when showing a step. */
   recording: boolean;
-  /** True while only measuring each node's natural size, before the records are made. */
+  /** True while only measuring each node's natural size, before anything is recorded. */
   measuring?: boolean;
   /**
    * The largest size each node reaches at any step, by id. Nodes keep it as their least size, so a box
    * whose content changes keeps one size and nothing around it moves.
    */
   reserved: Map<string, { width: number; height: number }>;
-  scopes: Map<
-    string,
-    {
-      steps: Map<number, LayoutRecord>;
-      bounds?: { left: number; top: number; right: number; bottom: number };
-    }
-  >;
+  /** Each arrangement's contents at every step, and its solution over all of them, by scope. */
+  scopes: Map<string, { inputs: Map<number, SpanInput>; span?: SpanLayout }>;
   /** The root's fit at each step. */
   fits: Map<number, number>;
 };

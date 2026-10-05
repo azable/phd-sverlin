@@ -51,6 +51,25 @@ describe('element references', () => {
       expect(v.is(messageContentSegmentSchema, reference(id))).toBe(false);
     expect(v.is(messageContentSegmentSchema, reference('62:7', 'x'.repeat(121)))).toBe(false);
     expect(v.is(messageContentSegmentSchema, reference('62:7', '  '))).toBe(false);
+    const layout = (layouts: unknown) => ({
+      ...reference('62:7'),
+      element: { id: '62:7', label: 'Int 8', layouts }
+    });
+    expect(
+      v.is(
+        messageContentSegmentSchema,
+        layout([
+          { node: '50:1', seed: 606668785, chain: 'snake', curve: 'curved' },
+          { node: 'frame', seed: 3 }
+        ])
+      )
+    ).toBe(true);
+    for (const bad of [
+      [{ node: '50:1', seed: 1, chain: 'spiral' }],
+      [{ node: 'body', seed: 1 }],
+      [{ node: '50:1', seed: 1.5 }]
+    ])
+      expect(v.is(messageContentSegmentSchema, layout(bad))).toBe(false);
   });
 });
 

@@ -9,6 +9,7 @@
 
   import Arranged from './Arranged.svelte';
   import type { Template } from './arrange';
+  import type { ChainShape } from './chain';
   import Node from './Node.svelte';
   import {
     defaultsContext,
@@ -76,6 +77,9 @@
     links,
     constraints,
     flow,
+    chain,
+    curve,
+    layoutSeed,
     __ref,
     __id,
     __type
@@ -131,6 +135,19 @@
     constraints?: readonly string[];
     /** In a free layout, the axis arrows point along: 'x' (rightwards) or 'y' (downwards). */
     flow?: 'x' | 'y';
+    /**
+     * In a free layout whose links form a chain, such as a linked list, its shape: 'line', 'snake',
+     * 'wave', 'arc', 'ring', or 'scatter'. Unset, each presentation draws one that suits the space.
+     */
+    chain?: ChainShape;
+    /** In a free layout, whether arrows prefer to run straight or to curve; unset, each presentation draws it. */
+    curve?: 'straight' | 'curved';
+    /**
+     * Keeps this node's layout of its children the same in every presentation: its shape, spacing,
+     * and curves come from this seed instead of the presentation's. Selections report the seed a
+     * layout used, so a layout the participant liked can be kept while everything else varies.
+     */
+    layoutSeed?: number;
     /** Internal: the source position of this node's tag, added by the compiler. */
     __ref?: string;
     /** Internal: an id given by the node this one stands for, such as a collection or a renderer's caller. */
@@ -295,6 +312,9 @@
         {links}
         {constraints}
         {flow}
+        {chain}
+        {curve}
+        {layoutSeed}
         gap={gap ?? drawn?.gap ?? 'medium'}
         scope={id ?? 'node'}
       >

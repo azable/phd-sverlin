@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { projectHead, projectSnapshotAt } from '$lib/shared/projects/projection';
-import { markdownMessage } from '$lib/shared/projects/events/message-content';
+import {
+  markdownMessage,
+  type ElementReference
+} from '$lib/shared/projects/events/message-content';
 import type { ProjectEventOf } from '$lib/shared/projects/events';
 import type { ProjectDocument } from '$lib/shared/projects/model';
 import type { BrowserBundlePresentation } from '$lib/shared/presentations';
@@ -1508,13 +1511,17 @@ describe('submitProjectFeedback', () => {
     if (presentation.format !== 'browser-bundle-v1') throw new Error('Expected a Sverlin bundle.');
     const lines = presentation.source.text.split('\n');
     const line = lines.findIndex((text) => text.startsWith('<Node size={titleSize}')) + 1;
-    const reference = {
-      type: 'element-ref' as const,
+    const reference: ElementReference = {
+      type: 'element-ref',
       presentationId: presentation.presentationId,
       step: 1,
-      element: { id: `${line}:1`, label: 'Linear search' }
+      element: {
+        id: `${line}:1`,
+        label: 'Linear search',
+        layouts: [{ node: `${line}:1`, seed: 7, chain: 'snake' }]
+      }
     };
-    const submit = (content: (typeof reference)[]) =>
+    const submit = (content: ElementReference[]) =>
       submitProjectFeedback(
         {
           projectId: created.projectId,
@@ -1531,6 +1538,11 @@ describe('submitProjectFeedback', () => {
       submit([{ ...reference, element: { id: `${line}:2`, label: 'x' } }])
     ).rejects.toThrow('is not a node of that presentation');
     await expect(submit([{ ...reference, step: 99 }])).rejects.toThrow('has no step 100');
+    await expect(
+      submit([
+        { ...reference, element: { ...reference.element, layouts: [{ node: '1:1', seed: 7 }] } }
+      ])
+    ).rejects.toThrow('Layout node 1:1 is not a node');
     expect(mocks.generatePrepared).not.toHaveBeenCalled();
 
     await submit([reference]);
@@ -1550,7 +1562,15 @@ describe('submitProjectFeedback', () => {
                   column: 1,
                   occurrence: 1,
                   markup: expect.stringContaining('Linear search')
-                })
+                }),
+                layouts: [
+                  {
+                    node: `${line}:1`,
+                    seed: 7,
+                    chain: 'snake',
+                    source: expect.objectContaining({ line, column: 1 })
+                  }
+                ]
               }
             ]
           })

@@ -514,7 +514,16 @@ function frameSettings(value: unknown): FrameSettings {
         .join(', ')}.`
     );
   };
-  const settings = ['ratio', 'justify', 'align', 'padding', 'layout', 'constraints', 'links'];
+  const settings = [
+    'ratio',
+    'justify',
+    'align',
+    'padding',
+    'layout',
+    'constraints',
+    'links',
+    'layoutSeed'
+  ];
   const unknown = Object.keys(given).find((key) => !settings.includes(key));
   if (unknown)
     throw new InvalidSvelteSourceError(
@@ -535,6 +544,9 @@ function frameSettings(value: unknown): FrameSettings {
     return list as string[];
   };
   const constraints = strings('constraints');
+  const layoutSeed = given.layoutSeed;
+  if (layoutSeed !== undefined && !Number.isSafeInteger(layoutSeed))
+    throw new InvalidSvelteSourceError('The design value frame.layoutSeed must be a whole number.');
   const links = strings('links');
   const padding = given.padding ?? 'large';
   if (!(typeof padding === 'number' && Number.isFinite(padding)))
@@ -546,6 +558,7 @@ function frameSettings(value: unknown): FrameSettings {
     padding: padding as FrameSettings['padding'],
     layout: choice('layout', { column: 1, row: 1, free: 1 }) as FrameSettings['layout'],
     ...(constraints ? { constraints } : {}),
-    ...(links ? { links } : {})
+    ...(links ? { links } : {}),
+    ...(layoutSeed !== undefined ? { layoutSeed: layoutSeed as number } : {})
   };
 }

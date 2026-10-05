@@ -5,7 +5,7 @@
 // 'sverlin:types' context.
 
 import { mount, unmount, type Component } from 'svelte';
-import { Frame, themeCss, type FrameSettings, type LayoutMemory } from 'sverlin';
+import { Frame, settleSpans, themeCss, type FrameSettings, type LayoutMemory } from 'sverlin';
 import Main from 'virtual:component';
 import atoms from 'virtual:atoms';
 import states from 'virtual:trace';
@@ -141,8 +141,8 @@ function show(step: number) {
 }
 
 /**
- * Measure every node at every step, keeping the largest size each reaches, then lay out every step
- * in order, each from the one before, recording what each step shows.
+ * Measure every node at every step, keeping the largest size each reaches, then record what every
+ * arrangement contains at every step and solve each once over all of them.
  */
 async function recordSteps() {
   // A page loaded while hidden has no layout to measure until it is shown.
@@ -170,7 +170,13 @@ async function recordSteps() {
         });
       }
     });
-  for (let step = 0; step < states.length; step++) await pass(step, 'recording', () => {});
+  // Record what every arrangement contains at every step, then solve each over all of them; a
+  // nested arrangement's solution changes its size and so what its parent contains, so recording
+  // repeats until no solution changes.
+  for (let round = 0; round < 3; round++) {
+    for (let step = 0; step < states.length; step++) await pass(step, 'recording', () => {});
+    if (!settleSpans(scopes)) break;
+  }
 }
 
 let requested = clampStep(playback.__sverlinStep ?? 0);

@@ -4,7 +4,12 @@
  * element reference restores it at its step.
  */
 
-export type SelectedElement = { id: string; label: string };
+import type * as v from 'valibot';
+
+import type { selectedElementSchema } from '$lib/shared/projects/events/message-content';
+
+/** A selected element, with the constraint layouts around it (see selectedElementSchema). */
+export type SelectedElement = v.InferOutput<typeof selectedElementSchema>;
 
 export type VisualSelection = {
   presentationId: string;

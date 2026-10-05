@@ -63,6 +63,11 @@
   let fit = $state(1);
   // Bumped whenever an arrangement settles, so selection outlines are measured again.
   let layoutRevision = $state(0);
+  // The root scales to fill the frame: down when its content is too big, and up, to a limit, when it
+  // would leave the frame mostly empty, so every design uses the space it has.
+  const largestFit = 1.6;
+  // The least size of a CSS root, so once scaled it spans the frame's inside and justify can spread.
+  let flowLeast = $state<{ width: number; height: number }>();
   function measureFit() {
     queueMicrotask(() => {
       const block = rootElement?.querySelector<HTMLElement>(':scope > .sv-root-inner > *');
@@ -72,19 +77,38 @@
           width: frameElement.clientWidth - parseFloat(style.paddingLeft) * 2,
           height: frameElement.clientHeight - parseFloat(style.paddingTop) * 2
         };
-        rootSize = { width: block.offsetWidth, height: block.offsetHeight };
+        // A CSS root is stretched to the frame, so its content's own extent is measured instead.
+        const content = block.classList.contains('sv-flow') ? flowExtent(block) : undefined;
+        const natural = content ?? { width: block.offsetWidth, height: block.offsetHeight };
         const needed = Math.min(
-          1,
-          inside.width / Math.max(1, rootSize.width),
-          inside.height / Math.max(1, rootSize.height)
+          largestFit,
+          inside.width / Math.max(1, natural.width),
+          inside.height / Math.max(1, natural.height)
         );
         // Every step shows at the smallest fit any step needs, so the view never zooms between them.
         if (memory?.recording) memory.fits.set(memory.step, needed);
         fit = memory && !memory.recording ? Math.min(needed, ...memory.fits.values()) : needed;
+        if (content) flowLeast = { width: inside.width / fit, height: inside.height / fit };
+        rootSize = {
+          width: content ? Math.max(content.width, inside.width / fit) : natural.width,
+          height: content ? Math.max(content.height, inside.height / fit) : natural.height
+        };
       }
       layoutRevision++;
       scheduleSettle();
     });
+  }
+
+  /** The extent of a CSS root's children, laid out in its direction with its gap. */
+  function flowExtent(flow: HTMLElement): { width: number; height: number } {
+    const children = [...flow.children] as HTMLElement[];
+    const gap = (parseFloat(getComputedStyle(flow).rowGap) || 0) * Math.max(0, children.length - 1);
+    const widths = children.map((child) => child.offsetWidth);
+    const heights = children.map((child) => child.offsetHeight);
+    const total = (sizes: number[]) => sizes.reduce((sum, size) => sum + size, 0) + gap;
+    return flow.style.flexDirection === 'row'
+      ? { width: total(widths), height: Math.max(0, ...heights) }
+      : { width: Math.max(0, ...widths), height: total(heights) };
   }
   provideArrangementParent({ changed: measureFit });
 
@@ -205,6 +229,29 @@
     post({ type: 'sverlin:view', zoom, panX, panY });
   }
 
+  /**
+   * The constraint layouts around a selected node: the one placing it among its siblings, and the
+   * one placing its own children, if any. Each names the node it belongs to (or the frame) and the
+   * seed it drew from, so feedback such as "keep this layout" can pin that seed.
+   */
+  function layoutsOf(element: HTMLElement) {
+    const own = element.querySelector<HTMLElement>(':scope > .sv-arranged');
+    const placing = element.parentElement?.closest<HTMLElement>('.sv-arranged');
+    return [own, placing].flatMap((arranged) => {
+      if (!arranged) return [];
+      const owner = arranged.closest<HTMLElement>('[data-sv-node]')?.dataset.svNode ?? 'frame';
+      const { svLayoutSeed, svChain, svCurve } = arranged.dataset;
+      return [
+        {
+          node: owner,
+          seed: Number(svLayoutSeed),
+          ...(svChain ? { chain: svChain } : {}),
+          ...(svCurve ? { curve: svCurve } : {})
+        }
+      ];
+    });
+  }
+
   // A selection is reported with a short label for each node: its type, if any, and its text.
   function reportSelection() {
     const elements = selected.flatMap((id) => {
@@ -214,7 +261,7 @@
       const text = (element.innerText || element.textContent || '').replace(/\s+/gu, ' ').trim();
       const typed = [element.dataset.svType, text].filter(Boolean).join(' ') || 'node';
       const label = typed.length > maxLabel ? `${typed.slice(0, maxLabel - 1)}…` : typed;
-      return [{ id, label }];
+      return [{ id, label, layouts: layoutsOf(element) }];
     });
     post({ type: 'sverlin:selection', elements });
   }
@@ -471,6 +518,7 @@
             constraints={settings.constraints}
             gap={drawn?.gap ?? 'medium'}
             scope="frame"
+            layoutSeed={settings.layoutSeed}
           >
             <View {...props} />
           </Arranged>
@@ -484,8 +532,12 @@
               settings.justify ?? drawn?.frame.justify ?? 'start'
             ]}
             style:align-items={alignments[settings.align ?? drawn?.frame.align ?? 'center']}
-            style:min-width="calc({width}px - 2 * {measure(spacings, settings.padding)})"
-            style:min-height="calc({height}px - 2 * {measure(spacings, settings.padding)})"
+            style:min-width={flowLeast
+              ? `${flowLeast.width}px`
+              : `calc(${width}px - 2 * ${measure(spacings, settings.padding)})`}
+            style:min-height={flowLeast
+              ? `${flowLeast.height}px`
+              : `calc(${height}px - 2 * ${measure(spacings, settings.padding)})`}
           >
             <View {...props} />
           </div>

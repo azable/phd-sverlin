@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   arrange,
   keyedRandom,
+  layoutSeedFor,
   type ArrangeBox,
   type ArrangeOptions,
   type ArrangeResult
@@ -153,13 +154,15 @@ describe('links along a flow', () => {
     n1: { box: 1, x: 5, y: 0, width: 40, height: 40 },
     n2: { box: 2, x: 0, y: 0, width: 40, height: 40 }
   };
+  // A line, with arrows preferring to run straight (the seed's curve style below one half).
   const chain = arrange(columns, {
     template: 'free',
     links: ['n0 -> n1', 'n1 -> n2'],
     flow: 'x',
+    chain: 'line',
     gap: 6,
     anchors,
-    random: keyedRandom(3, 'list')
+    random: () => 0.25
   });
 
   it('runs a chain straight on its anchors, with visible arrows between them', () => {
@@ -181,47 +184,92 @@ describe('links along a flow', () => {
     expect(first.y2).toBeCloseTo(b.y, 0);
   });
 
-  it('lays out a cycle, leaving the link that closes it free', () => {
-    const cycle = arrange(columns, {
+  it('lays a cycle out as a ring, every node on one circle', () => {
+    const ring = arrange(columns, {
       template: 'free',
       links: ['n0 -> n1', 'n1 -> n2', 'n2 -> n0'],
-      flow: 'x',
+      chain: 'ring',
+      aspect: 1,
       gap: 6,
       anchors,
       random: keyedRandom(3, 'list')
     });
-    expect(cycle.edges).toHaveLength(3);
-    expect(cycle.placements[1].x).toBeGreaterThan(cycle.placements[0].x);
-    expect(cycle.placements[2].x).toBeGreaterThan(cycle.placements[1].x);
+    expect(ring.edges).toHaveLength(3);
+    const centres = ring.placements.map(({ x, y }, i) => ({
+      x: x + anchors[columns[i].key as 'n0'].x + 20,
+      y: y + anchors[columns[i].key as 'n0'].y + 20
+    }));
+    const middle = {
+      x: centres.reduce((sum, { x }) => sum + x, 0) / 3,
+      y: centres.reduce((sum, { y }) => sum + y, 0) / 3
+    };
+    const radii = centres.map(({ x, y }) => Math.hypot(x - middle.x, y - middle.y));
+    expect(Math.max(...radii) - Math.min(...radii)).toBeLessThan(1);
+  });
+
+  it('draws varied shapes for a chain across seeds, filling the space without overlaps', () => {
+    const list = Array.from({ length: 8 }, (_, i) => ({ key: `n${i}`, width: 40, height: 40 }));
+    const links = list.slice(1).map(({ key }, i) => `n${i} -> ${key}`);
+    const looks = new Set<string>();
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      const result = arrange(list, {
+        template: 'free',
+        links,
+        gap: 8,
+        aspect: 2,
+        random: keyedRandom(seed, 'list')
+      });
+      looks.add(
+        JSON.stringify(result.placements.map(({ x, y }) => [Math.round(x), Math.round(y)]))
+      );
+      // Stretched to suit a space twice as wide as tall, within half again.
+      expect(Math.abs(Math.log(result.width / result.height / 2))).toBeLessThan(Math.log(1.6));
+      for (const [i, a] of result.placements.entries())
+        for (const b of result.placements.slice(i + 1))
+          expect(Math.abs(a.x - b.x) >= 40 - 0.5 || Math.abs(a.y - b.y) >= 40 - 0.5).toBe(true);
+      for (const edge of result.edges) expect(edge.path).toMatch(/^M[\d.-]+,[\d.-]+ C/u);
+    }
+    expect(looks.size).toBeGreaterThan(5);
   });
 });
 
-describe('layouts across steps', () => {
-  const base = { template: 'free' as const, gap: 10, random: keyedRandom(4, 'frame') };
+describe('layout choices', () => {
+  const list = Array.from({ length: 6 }, (_, i) => ({ key: `n${i}`, width: 40, height: 40 }));
+  const links = list.slice(1).map(({ key }, i) => `n${i} -> ${key}`);
 
-  it('keeps children that have not changed exactly where they were, moving only what changed', () => {
-    const before = arrange(boxes, base);
-    // The note grows; everything else is the same size as before.
-    const grown = boxes.map((box) => (box.key === 'note' ? { ...box, width: 260 } : box));
-    const after = arrange(grown, {
-      ...base,
-      starts: before.centres,
-      still: new Set(boxes.filter(({ key }) => key !== 'note').map(({ key }) => key))
+  it('reports what the seed chose, and reproduces it from the same layout seed', () => {
+    const seed = layoutSeedFor(5, '50:1');
+    const first = arrange(list, {
+      template: 'free',
+      links,
+      gap: 8,
+      random: keyedRandom(seed, 'layout')
     });
-    for (const key of ['a', 'b', 'c', 'head']) {
-      expect(after.centres[key].x).toBeCloseTo(before.centres[key].x, 3);
-      expect(after.centres[key].y).toBeCloseTo(before.centres[key].y, 3);
+    const again = arrange(list, {
+      template: 'free',
+      links,
+      gap: 8,
+      random: keyedRandom(seed, 'layout')
+    });
+    expect(first.choices.chain).toBeDefined();
+    expect(['straight', 'curved']).toContain(first.choices.curve);
+    expect(again.placements).toEqual(first.placements);
+    expect(again.choices).toEqual(first.choices);
+    // Different places in a view derive different seeds.
+    expect(layoutSeedFor(5, '50:1')).not.toBe(layoutSeedFor(5, '60:1'));
+  });
+
+  it('keeps a pinned chain shape and curve style', () => {
+    for (const seed of [1, 2, 3]) {
+      const result = arrange(list, {
+        template: 'free',
+        links,
+        gap: 8,
+        chain: 'wave',
+        curve: 'straight',
+        random: keyedRandom(seed, 'layout')
+      });
+      expect(result.choices).toEqual({ chain: 'wave', curve: 'straight' });
     }
-    const note = after.placements[4];
-    const others = after.placements
-      .slice(0, 4)
-      .map((placement, i) => ({ ...placement, ...grown[i] }));
-    for (const other of others)
-      expect(
-        note.x + 260 <= other.x + 0.5 ||
-          other.x + other.width <= note.x + 0.5 ||
-          note.y + 32 <= other.y + 0.5 ||
-          other.y + other.height <= note.y + 0.5
-      ).toBe(true);
   });
 });

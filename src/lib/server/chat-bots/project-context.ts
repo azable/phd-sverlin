@@ -118,6 +118,19 @@ export type AiSelectedElement = {
   elementId: string;
   label: string;
   source: ElementLocation;
+  /**
+   * The constraint layouts around the element: the one placing it and the one placing its children.
+   * Each gives the arranging node (its tag in the source, or the frame), the seed its layout drew
+   * from, and what it drew; setting that node's layoutSeed (frame.layoutSeed for the frame) to the
+   * seed keeps the layout in every presentation.
+   */
+  layouts: Array<{
+    node: string;
+    source?: ElementLocation;
+    seed: number;
+    chain?: string;
+    curve?: string;
+  }>;
 };
 
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
@@ -361,7 +374,14 @@ function selectedElement(
       stepLabel: presentationStepLabels(presentation)[reference.step] ?? '',
       elementId: reference.element.id,
       label: reference.element.label,
-      source
+      source,
+      layouts: (reference.element.layouts ?? []).map((layout) => {
+        const located =
+          layout.node === 'frame'
+            ? undefined
+            : locateElement(presentation.source.text, layout.node);
+        return { ...layout, ...(located ? { source: located } : {}) };
+      })
     }
   ];
 }

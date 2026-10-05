@@ -29,12 +29,30 @@ export const elementIdSchema = v.pipe(
 /** A short label for a selected element, taken from what it showed. */
 export const elementLabelSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(120));
 
+/**
+ * A constraint layout around a selected element: the node it belongs to (an element id, or 'frame'
+ * for the page), the seed it drew from, and what it drew, so feedback can keep it by pinning the seed.
+ */
+export const elementLayoutSchema = v.strictObject({
+  node: v.union([v.literal('frame'), elementIdSchema]),
+  seed: v.pipe(v.number(), v.safeInteger()),
+  chain: v.optional(v.picklist(['line', 'snake', 'wave', 'arc', 'ring', 'scatter'])),
+  curve: v.optional(v.picklist(['straight', 'curved']))
+});
+
+/** A selected element: its id, a label from what it showed, and the layouts around it. */
+export const selectedElementSchema = v.strictObject({
+  id: elementIdSchema,
+  label: elementLabelSchema,
+  layouts: v.optional(v.pipe(v.array(elementLayoutSchema), v.maxLength(2)))
+});
+
 /** One element a participant selected in a presentation at a step, referenced in a message. */
 export const elementReferenceSegmentSchema = v.strictObject({
   type: v.literal('element-ref'),
   presentationId: presentationIdSchema,
   step: v.pipe(naturalSchema, v.maxValue(100_000)),
-  element: v.strictObject({ id: elementIdSchema, label: elementLabelSchema })
+  element: selectedElementSchema
 });
 
 /** Runtime schema for one Markdown or exact visualization reference segment. */
