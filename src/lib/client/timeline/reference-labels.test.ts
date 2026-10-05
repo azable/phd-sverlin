@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import { presentationDisplayId } from '$lib/client/visualization/presentation-history';
-import { referenceChipLabel, singletonReferenceSegments } from './reference-labels';
+import {
+  referenceChipLabel,
+  referenceChipTitle,
+  singletonReferenceSegments
+} from './reference-labels';
 
 describe('presentation reference labels', () => {
-  it('labels an element chip with its presentation, step, and element', () => {
-    const reference = {
+  it('labels an element chip compactly, with the full label on hover', () => {
+    const reference = (label: string) => ({
       type: 'element-ref' as const,
       presentationId: '12345678-1234-4123-8123-123456789ac1',
-      step: 2,
-      element: { id: '62:7#2', label: 'Int 8' }
-    };
-    expect(referenceChipLabel(reference)).toBe(
-      `${presentationDisplayId(reference.presentationId)} / S3 / Int 8`
+      step: 0,
+      element: { id: '55:1', label }
+    });
+    const presentation = presentationDisplayId(reference('').presentationId);
+    expect(referenceChipLabel(reference('Int 8'))).toBe(`${presentation} · S1 · Int 8`);
+    const long = 'Begin with a one-item sorted prefix Insertion sort';
+    expect(referenceChipLabel(reference(long))).toBe(`${presentation} · S1 · Begin with a…`);
+    expect(referenceChipLabel(reference('Supercalifragilisticexpialidocious'))).toBe(
+      `${presentation} · S1 · Supercalifragilistic…`
     );
+    expect(referenceChipTitle(reference(long))).toBe(`${presentation} · step 1 · ${long}`);
   });
 
   it('retains one actionable chip with a stable participant-facing label', () => {

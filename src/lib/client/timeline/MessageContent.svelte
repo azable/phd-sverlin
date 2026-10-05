@@ -6,6 +6,7 @@
   import { renderSafeMarkdown } from './markdown';
   import {
     referenceChipLabel,
+    referenceChipTitle,
     singletonReferenceSegments,
     type ReferenceSegment
   } from './reference-labels';
@@ -39,6 +40,7 @@
             size="xs"
             variant={inverted ? 'secondary' : 'outline'}
             class="mx-0.5 inline-flex align-baseline font-mono"
+            title={referenceChipTitle(reference)}
             onclick={(event) => onReferenceActivate(reference, event.shiftKey)}
           >
             {referenceChipLabel(reference)}
@@ -47,6 +49,7 @@
           <Badge
             variant={inverted ? 'secondary' : 'outline'}
             class="mx-0.5 inline-flex overflow-visible align-baseline font-mono"
+            title={referenceChipTitle(reference)}
           >
             {referenceChipLabel(reference)}
           </Badge>

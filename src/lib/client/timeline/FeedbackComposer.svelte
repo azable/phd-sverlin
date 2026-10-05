@@ -17,7 +17,11 @@
     feedbackSubmissionContent,
     selectionReferences
   } from './feedback-context';
-  import { referenceChipLabel, type ReferenceSegment } from './reference-labels';
+  import {
+    referenceChipLabel,
+    referenceChipTitle,
+    type ReferenceSegment
+  } from './reference-labels';
 
   type Props = {
     session: ProjectSession;
@@ -151,9 +155,10 @@
       'mx-0.5 inline-flex items-center gap-1 rounded-md border bg-muted px-1.5 py-0.5 align-baseline font-mono text-sm text-foreground';
     const label = document.createElement('span');
     label.textContent = referenceChipLabel(reference);
+    chip.title = referenceChipTitle(reference);
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.setAttribute('aria-label', `Remove reference ${label.textContent}`);
+    remove.setAttribute('aria-label', `Remove reference ${chip.title}`);
     remove.className = 'rounded-sm text-muted-foreground hover:text-foreground';
     remove.textContent = '×';
     remove.onclick = () => {

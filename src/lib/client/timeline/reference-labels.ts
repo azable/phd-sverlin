@@ -10,9 +10,26 @@ export function singletonReferenceSegments(reference: ReferenceSegment): Referen
   return [reference];
 }
 
+// An element chip shows this much of the element's label; the full label is on hover.
+const chipLabelLength = 20;
+
 /** Return the compact, participant-facing label for one reference chip. */
 export function referenceChipLabel(reference: ReferenceSegment): string {
   const presentation = presentationDisplayId(reference.presentationId);
   if (reference.type === 'presentation-ref') return presentation;
-  return `${presentation} / S${reference.step + 1} / ${reference.element.label}`;
+  return `${presentation} · S${reference.step + 1} · ${shortLabel(reference.element.label)}`;
+}
+
+/** Return the full description of one reference chip, shown on hover. */
+export function referenceChipTitle(reference: ReferenceSegment): string {
+  const presentation = presentationDisplayId(reference.presentationId);
+  if (reference.type === 'presentation-ref') return presentation;
+  return `${presentation} · step ${reference.step + 1} · ${reference.element.label}`;
+}
+
+/** A label cut at a word boundary near the chip length, with an ellipsis if cut. */
+function shortLabel(label: string): string {
+  if (label.length <= chipLabelLength) return label;
+  const cut = label.lastIndexOf(' ', chipLabelLength);
+  return `${label.slice(0, cut > chipLabelLength / 2 ? cut : chipLabelLength).trimEnd()}…`;
 }
