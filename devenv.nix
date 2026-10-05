@@ -10,7 +10,7 @@ let
       sha256 = "a840d269dff2fafb371dd247df13ad5e026d7ce3b35ad3dc1eedd59bf0c2fb16";
     };
   });
-  flock = if pkgs.stdenv.isDarwin then pkgs.flock else pkgs.util-linux;
+  flock = if pkgs.stdenv.hostPlatform.isDarwin then pkgs.flock else pkgs.util-linux;
   vscodeExtensions = [
     "mkhl.direnv"
     "jnoortheen.nix-ide"
