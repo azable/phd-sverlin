@@ -128,6 +128,18 @@
   // Elements selected in the visible presentations, to reference in feedback.
   const visualSelections = new VisualSelections();
 
+  // Each selection with the source its presentation was built from, for the source panel.
+  const selectedSources = $derived(
+    visualSelections.current.flatMap((selection) => {
+      const presentation = visiblePresentations.find(
+        (entry) => entry.presentation.presentationId === selection.presentationId
+      )?.presentation;
+      return presentation?.format === 'browser-bundle-v1'
+        ? [{ source: presentation.source.text, ids: selection.elements.map(({ id }) => id) }]
+        : [];
+    })
+  );
+
   /** After the timeline shows an element reference's presentation, seek its step and select it. */
   function showElementReference(reference: ElementReference) {
     const context = presentationPlaybackContext(
@@ -570,7 +582,7 @@
             disabled={mutationsDisabled}
           />
           <div class="contents" data-replay-region="artifact">
-            <ProjectArtifactPanel {session} {presentationCount} bind:editMode />
+            <ProjectArtifactPanel {session} {presentationCount} {selectedSources} bind:editMode />
           </div>
         </Resizable.Pane>
       </Resizable.PaneGroup>

@@ -4,6 +4,11 @@
   import { EditorView } from 'codemirror';
 
   import { artifactEditorExtensions, type ArtifactLanguage } from './artifact-editor';
+  import {
+    showSourceHighlights,
+    sourceHighlights,
+    type SourceHighlight
+  } from './selection-highlights';
 
   /** Public properties accepted by the CodeMirror artifact editor. */
   type Props = {
@@ -11,6 +16,8 @@
     editable?: boolean;
     language?: ArtifactLanguage;
     ariaLabel?: string;
+    /** Tags to highlight, such as those behind elements selected in a presentation. */
+    highlights?: readonly SourceHighlight[];
     onChange?: (value: string) => void;
   };
 
@@ -19,6 +26,7 @@
     editable = false,
     language = 'svelte',
     ariaLabel = 'Source code editor',
+    highlights = [],
     onChange
   }: Props = $props();
 
@@ -41,6 +49,7 @@
         doc: value,
         extensions: [
           ...artifactEditorExtensions({ language }),
+          sourceHighlights,
           editableCompartment.of(editableExtensions(editable)),
           EditorView.updateListener.of((update) => {
             if (suppressChange || !update.docChanged) return;
@@ -73,6 +82,13 @@
       });
       suppressChange = false;
     }
+  });
+
+  // After the document, so highlights are placed in the text they refer to.
+  $effect(() => {
+    void value;
+    const shown = [...highlights];
+    if (view) view.dispatch(showSourceHighlights(view.state, shown));
   });
 
   $effect(() => {
