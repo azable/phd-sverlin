@@ -19,6 +19,7 @@
     stroke,
     strokeWidth,
     curve,
+    bend,
     __ref
   }: {
     /** The key of the node the link starts from. */
@@ -36,6 +37,12 @@
     strokeWidth?: StrokeWidth;
     /** Whether this link runs straight or curves, whatever its arrangement prefers. */
     curve?: 'straight' | 'curved';
+    /**
+     * An exact curve: how far the link bows to one side, as a fraction of its length (0 is straight,
+     * 0.3 a clear arc, negative the other side). Selections report the bend a link drew, so a curve
+     * the participant liked can be kept.
+     */
+    bend?: number;
     /** Internal: the source position of this link's tag, added by the compiler. */
     __ref?: string;
   } = $props();
@@ -56,6 +63,9 @@
   data-stroke={stroke}
   data-stroke-width={strokeWidth}
   data-curve={curve}
+  data-bend={typeof bend === 'number' && Number.isFinite(bend)
+    ? Math.min(Math.max(bend, -1), 1)
+    : undefined}
 ></span>
 
 <style>

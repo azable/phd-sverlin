@@ -242,12 +242,12 @@
     return [own, placing].flatMap((arranged) => {
       if (!arranged) return [];
       const owner = arranged.closest<HTMLElement>('[data-sv-node]')?.dataset.svNode ?? 'frame';
-      const { svLayoutSeed, svChain, svCurve } = arranged.dataset;
+      const { svLayoutSeed, svForm, svCurve } = arranged.dataset;
       return [
         {
           node: owner,
           seed: Number(svLayoutSeed),
-          ...(svChain ? { chain: svChain } : {}),
+          ...(svForm ? { form: svForm } : {}),
           ...(svCurve ? { curve: svCurve } : {})
         }
       ];
@@ -266,7 +266,16 @@
         element.dataset.svLabel ??
         ([element.dataset.svType, text].filter(Boolean).join(' ') || 'node');
       const label = typed.length > maxLabel ? `${typed.slice(0, maxLabel - 1)}…` : typed;
-      return [{ id, label, layouts: layoutsOf(element) }];
+      const bend = element.dataset.svBend;
+      return [
+        {
+          id,
+          label,
+          layouts: layoutsOf(element),
+          // A link reports the curve it drew, so it can be kept.
+          ...(bend !== undefined && Number.isFinite(Number(bend)) ? { bend: Number(bend) } : {})
+        }
+      ];
     });
     post({ type: 'sverlin:selection', elements });
   }

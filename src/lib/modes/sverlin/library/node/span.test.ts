@@ -67,3 +67,35 @@ describe('layouts over a whole animation', () => {
     expect(settleSpans(scopes)).toBe(false);
   });
 });
+
+describe('structure over a whole animation', () => {
+  const boxes = ['a', 'b', 'c', 'd'].map((key) => ({ key, width: 40, height: 40 }));
+  const step = (links: { from: string; to: string; id: string }[], seed: number): SpanInput => ({
+    seed,
+    boxes,
+    anchors: {},
+    parts: [],
+    options: {
+      template: 'free',
+      links: links.map((link) => ({ ...link, directed: true })),
+      gap: 8,
+      aspect: 2
+    }
+  });
+  const path = [
+    { from: 'a', to: 'b', id: '1:1' },
+    { from: 'b', to: 'c', id: '2:1' },
+    { from: 'c', to: 'd', id: '3:1' }
+  ];
+
+  it('reads the structure from links present at every step, drawing the rest on top', () => {
+    const steps = [step(path, 3), step([...path, { from: 'b', to: 'd', id: '4:1' }], 3)];
+    // The link that comes and goes would make a layered graph; only the path counts, so a layered
+    // form does not apply.
+    for (const input of steps) input.options.form = 'layers-down';
+    const span = solveSpan(steps);
+    expect(span.choices.form).not.toBe('layers-down');
+    expect(span.problems.join(' ')).toMatch(/make a path/u);
+    expect(span.edges.map(({ id }) => id)).toEqual(['1:1', '2:1', '3:1', '4:1']);
+  });
+});

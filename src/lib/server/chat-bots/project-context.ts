@@ -128,9 +128,11 @@ export type AiSelectedElement = {
     node: string;
     source?: ElementLocation;
     seed: number;
-    chain?: string;
+    form?: string;
     curve?: string;
   }>;
+  /** For a link, the curve it drew; setting bend on its <Link> to this value keeps that curve. */
+  bend?: number;
 };
 
 /** Strongly typed, consumer-specific context supplied to the AI assistant. */
@@ -375,6 +377,7 @@ function selectedElement(
       elementId: reference.element.id,
       label: reference.element.label,
       source,
+      ...(reference.element.bend !== undefined ? { bend: reference.element.bend } : {}),
       layouts: (reference.element.layouts ?? []).map((layout) => {
         const located =
           layout.node === 'frame'

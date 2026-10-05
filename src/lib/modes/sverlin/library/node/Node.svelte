@@ -9,7 +9,7 @@
 
   import Arranged from './Arranged.svelte';
   import type { Template } from './arrange';
-  import type { ChainShape } from './chain';
+  import type { Form } from './forms';
   import Node from './Node.svelte';
   import {
     defaultsContext,
@@ -76,7 +76,7 @@
     key,
     constraints,
     flow,
-    chain,
+    form,
     curve,
     layoutSeed,
     __ref,
@@ -134,10 +134,12 @@
     /** In a free layout, the axis arrows point along: 'x' (rightwards) or 'y' (downwards). */
     flow?: 'x' | 'y';
     /**
-     * In a free layout whose links form a chain, such as a linked list, its shape: 'line', 'snake',
-     * 'wave', 'arc', 'ring', or 'scatter'. Unset, each presentation draws one that suits the space.
+     * In a free layout, the form its linked structure takes: in sequence ('line', 'snake', 'wave',
+     * 'arc', 'scatter'), as a 'ring', as a tree ('tree-down', 'tree-right', 'radial', 'indented'), or in
+     * layers ('layers-down', 'layers-right'), as the structure allows. Unset, each presentation draws
+     * one that suits the space.
      */
-    chain?: ChainShape;
+    form?: Form;
     /** In a free layout, whether arrows prefer to run straight or to curve; unset, each presentation draws it. */
     curve?: 'straight' | 'curved';
     /**
@@ -311,7 +313,7 @@
         align={align ?? (arrangement === 'column' ? 'center' : 'start')}
         {constraints}
         {flow}
-        {chain}
+        {form}
         {curve}
         {layoutSeed}
         gap={gap ?? drawn?.gap ?? 'medium'}

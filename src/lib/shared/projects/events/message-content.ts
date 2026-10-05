@@ -29,22 +29,46 @@ export const elementIdSchema = v.pipe(
 /** A short label for a selected element, taken from what it showed. */
 export const elementLabelSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(120));
 
+const layoutFormSchema = v.picklist([
+  'line',
+  'snake',
+  'wave',
+  'arc',
+  'scatter',
+  'ring',
+  'tree-down',
+  'tree-right',
+  'radial',
+  'indented',
+  'layers-down',
+  'layers-right'
+]);
+
 /**
  * A constraint layout around a selected element: the node it belongs to (an element id, or 'frame'
  * for the page), the seed it drew from, and what it drew, so feedback can keep it by pinning the seed.
  */
-export const elementLayoutSchema = v.strictObject({
-  node: v.union([v.literal('frame'), elementIdSchema]),
-  seed: v.pipe(v.number(), v.safeInteger()),
-  chain: v.optional(v.picklist(['line', 'snake', 'wave', 'arc', 'ring', 'scatter'])),
-  curve: v.optional(v.picklist(['straight', 'curved']))
-});
+export const elementLayoutSchema = v.pipe(
+  v.strictObject({
+    node: v.union([v.literal('frame'), elementIdSchema]),
+    seed: v.pipe(v.number(), v.safeInteger()),
+    form: v.optional(layoutFormSchema),
+    /** The earlier name for form, read so references saved before the rename still load. */
+    chain: v.optional(layoutFormSchema),
+    curve: v.optional(v.picklist(['straight', 'curved']))
+  }),
+  v.transform(({ chain, ...layout }) =>
+    chain === undefined || layout.form !== undefined ? layout : { ...layout, form: chain }
+  )
+);
 
 /** A selected element: its id, a label from what it showed, and the layouts around it. */
 export const selectedElementSchema = v.strictObject({
   id: elementIdSchema,
   label: elementLabelSchema,
-  layouts: v.optional(v.pipe(v.array(elementLayoutSchema), v.maxLength(2)))
+  layouts: v.optional(v.pipe(v.array(elementLayoutSchema), v.maxLength(2))),
+  /** For a link, the curve it drew: how far it bows to one side, as a fraction of its length. */
+  bend: v.optional(v.pipe(v.number(), v.minValue(-1), v.maxValue(1)))
 });
 
 /** One element a participant selected in a presentation at a step, referenced in a message. */

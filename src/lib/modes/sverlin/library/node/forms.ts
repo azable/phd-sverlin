@@ -1,0 +1,402 @@
+/**
+ * Forms for linked structures. The links of a free layout are read for the structure they make: a
+ * path (such as a linked list), a cycle (a ring buffer), a tree (each node one parent), or a layered
+ * graph (directed and acyclic, with merges). Each structure has several forms, drawn from the seed
+ * unless the view names one, sized to the space the layout has and stretched to fill it, so
+ * presentations differ in look while showing the same structure. Anything else is left to the
+ * general layout.
+ */
+
+/** Forms that lay any structure out in sequence, along its reading order. */
+export const sequenceForms = ['line', 'snake', 'wave', 'arc', 'scatter'] as const;
+export const cycleForms = ['ring'] as const;
+export const treeForms = ['tree-down', 'tree-right', 'radial', 'indented'] as const;
+export const layerForms = ['layers-down', 'layers-right'] as const;
+export const forms = [
+  ...sequenceForms,
+  ...cycleForms,
+  ...treeForms,
+  ...layerForms
+] as readonly Form[];
+export type Form =
+  | (typeof sequenceForms)[number]
+  | (typeof cycleForms)[number]
+  | (typeof treeForms)[number]
+  | (typeof layerForms)[number];
+
+type Point = { x: number; y: number };
+type Size = { width: number; height: number };
+
+/**
+ * The structure a layout's links make, over the nodes that take part in it, in reading order: along
+ * a path or cycle, depth first through a tree, or topologically through a layered graph.
+ */
+export type Structure =
+  | { kind: 'path' | 'cycle'; nodes: number[] }
+  | { kind: 'tree'; nodes: number[]; root: number; children: Map<number, number[]> }
+  | { kind: 'layers'; nodes: number[]; parents: Map<number, number[]> };
+
+/**
+ * The forms a structure can take. Any structure can be laid out in sequence along its reading order,
+ * with links that skip ahead curving round; a cycle can also close into a ring, a tree branch out,
+ * and a layered graph stack its layers. Its shape widens the choice, rather than dictating one.
+ */
+export function formsFor(structure: Structure): readonly Form[] {
+  switch (structure.kind) {
+    case 'path':
+      return sequenceForms;
+    case 'cycle':
+      return [...cycleForms, ...sequenceForms];
+    case 'tree':
+      return [...sequenceForms, ...treeForms];
+    case 'layers':
+      return [...sequenceForms, ...layerForms];
+  }
+}
+
+/**
+ * The structure the largest group of linked nodes makes, from directed links in the order written,
+ * or undefined when it is too small (fewer than three nodes) or has cycles beyond a single ring.
+ */
+export function findStructure(
+  count: number,
+  links: readonly { source: number; target: number }[]
+): Structure | undefined {
+  const edges = links.filter(
+    ({ source, target }) => source < count && target < count && source !== target
+  );
+  // The largest group of nodes the links join, ignoring direction.
+  const group = new Map<number, number>();
+  const find = (node: number): number => {
+    const parent = group.get(node) ?? node;
+    if (parent === node) return node;
+    const root = find(parent);
+    group.set(node, root);
+    return root;
+  };
+  for (const { source, target } of edges) group.set(find(source), find(target));
+  const sizes = new Map<number, number[]>();
+  for (const node of new Set(edges.flatMap(({ source, target }) => [source, target])))
+    sizes.set(find(node), [...(sizes.get(find(node)) ?? []), node]);
+  const nodes = [...sizes.values()].sort((a, b) => b.length - a.length || a[0] - b[0])[0];
+  if (!nodes || nodes.length < 3) return undefined;
+  const members = new Set(nodes);
+  const inside = edges.filter(({ source }) => members.has(source));
+  const children = new Map<number, number[]>();
+  const parents = new Map<number, number[]>();
+  for (const { source, target } of inside) {
+    if (children.get(source)?.includes(target)) continue;
+    children.set(source, [...(children.get(source) ?? []), target]);
+    parents.set(target, [...(parents.get(target) ?? []), source]);
+  }
+  const outs = (node: number) => children.get(node)?.length ?? 0;
+  const ins = (node: number) => parents.get(node)?.length ?? 0;
+
+  // A path or a cycle: every node at most one link in and one out.
+  if (nodes.every((node) => outs(node) <= 1 && ins(node) <= 1)) {
+    const start = nodes.find((node) => ins(node) === 0);
+    const order: number[] = [];
+    for (
+      let at: number | undefined = start ?? Math.min(...nodes);
+      at !== undefined && !order.includes(at);
+      at = children.get(at)?.[0]
+    )
+      order.push(at);
+    return { kind: start === undefined ? 'cycle' : 'path', nodes: order };
+  }
+  if (!acyclic(nodes, children)) return undefined;
+  const roots = nodes.filter((node) => ins(node) === 0);
+  // A tree: one root, and every other node one parent; read depth first, so a node is followed by
+  // its subtree.
+  if (roots.length === 1 && nodes.every((node) => ins(node) <= 1)) {
+    const order: number[] = [];
+    const visit = (node: number) => {
+      order.push(node);
+      for (const child of children.get(node) ?? []) visit(child);
+    };
+    visit(roots[0]);
+    return { kind: 'tree', nodes: order, root: roots[0], children };
+  }
+  // Otherwise a layered graph, read in topological order: each node after all its parents, ties
+  // kept in the order the nodes were written.
+  const waiting = new Map(nodes.map((node) => [node, ins(node)]));
+  const ready = nodes.filter((node) => ins(node) === 0).sort((a, b) => a - b);
+  const order: number[] = [];
+  while (ready.length) {
+    const node = ready.shift() as number;
+    order.push(node);
+    for (const child of children.get(node) ?? []) {
+      const left = (waiting.get(child) ?? 1) - 1;
+      waiting.set(child, left);
+      if (left === 0) ready.push(child);
+    }
+    ready.sort((a, b) => a - b);
+  }
+  return { kind: 'layers', nodes: order, parents };
+}
+
+function acyclic(nodes: readonly number[], children: ReadonlyMap<number, number[]>): boolean {
+  const state = new Map<number, 'open' | 'done'>();
+  const visit = (node: number): boolean => {
+    if (state.get(node) === 'done') return true;
+    if (state.get(node) === 'open') return false;
+    state.set(node, 'open');
+    const ok = (children.get(node) ?? []).every(visit);
+    state.set(node, 'done');
+    return ok;
+  };
+  return nodes.every(visit);
+}
+
+/**
+ * Centres for a structure's nodes in a form, for a space of the given width to height, stretched to
+ * fill it. `random` varies each form's free parameters, such as a wave's height or a node order.
+ */
+export function formCentres(
+  form: Form,
+  structure: Structure,
+  sizeOf: (node: number) => Size,
+  options: { room: number; aspect: number; random: (key: string) => number }
+): Map<number, Point> {
+  const sizes = structure.nodes.map(sizeOf);
+  // One step fits the widest node and room for an arrow; rows fit the tallest node and an arrow.
+  const across = Math.max(...sizes.map(({ width }) => width)) + options.room;
+  const down = Math.max(...sizes.map(({ height }) => height)) + options.room;
+  const step = { across, down };
+  let centres: Map<number, Point>;
+  // Sequence forms, and a ring, run along the structure's reading order, whatever its shape.
+  const inSequence =
+    (sequenceForms as readonly Form[]).includes(form) ||
+    (cycleForms as readonly Form[]).includes(form);
+  if (!inSequence && structure.kind === 'tree')
+    centres = treeCentres(form, structure, step, options.random);
+  else if (!inSequence && structure.kind === 'layers')
+    centres = layerCentres(form, structure, step, options.random);
+  else {
+    const placed = sequenceCentres(form, sizes.length, structure.kind === 'cycle', step, options);
+    centres = new Map(structure.nodes.map((node, i) => [node, placed[i]]));
+  }
+  return stretched(centres, sizeOf, options.aspect);
+}
+
+type Step = { across: number; down: number };
+
+function sequenceCentres(
+  form: Form,
+  count: number,
+  cycle: boolean,
+  { across, down }: Step,
+  options: { aspect: number; random: (key: string) => number }
+): Point[] {
+  const pick = (key: string, low: number, high: number) => low + options.random(key) * (high - low);
+  const indices = Array.from({ length: count }, (_, i) => i);
+  // As many rows as bring a grid of cells closest to the space's shape.
+  const rowsFor = (cell: Point) => {
+    let rows = 1;
+    let closest = Infinity;
+    for (let candidate = 1; candidate <= count; candidate++) {
+      const columns = Math.ceil(count / candidate);
+      const mismatch = Math.abs(
+        Math.log((columns * cell.x) / (candidate * cell.y) / options.aspect)
+      );
+      if (mismatch < closest) [rows, closest] = [candidate, mismatch];
+    }
+    return rows;
+  };
+  switch (form) {
+    case 'snake': {
+      // Rows read back and forth.
+      const rows = rowsFor({ x: across, y: down * 1.25 });
+      const columns = Math.ceil(count / rows);
+      return indices.map((i) => {
+        const row = Math.floor(i / columns);
+        const column = row % 2 ? columns - 1 - (i % columns) : i % columns;
+        return { x: column * across, y: row * down * 1.25 };
+      });
+    }
+    case 'wave': {
+      // Alternately up and down, or along a smooth swell, by an amount the seed chooses.
+      const height = down * pick('wave.height', 0.6, 1.3);
+      const smooth = options.random('wave.smooth') < 0.5;
+      return indices.map((i) => ({
+        x: i * across * 0.85,
+        y: smooth ? height * Math.sin((i * Math.PI) / 2) : (i % 2) * height
+      }));
+    }
+    case 'arc':
+    case 'ring': {
+      // A ring closes the circle; an arc sweeps part of one, bulging up or down.
+      const ring = form === 'ring' || cycle;
+      const sweep = ring ? 2 * Math.PI : pick('arc.sweep', 0.6, 1.2) * Math.PI;
+      const steps = ring ? count : count - 1;
+      const radius = Math.max(across, (steps * across) / sweep);
+      const start = ring ? options.random('ring.start') * 2 * Math.PI : -sweep / 2;
+      const flip = !ring && options.random('arc.flip') < 0.5 ? -1 : 1;
+      return indices.map((i) => {
+        const angle = start + (i * sweep) / steps;
+        return { x: radius * Math.sin(angle), y: -flip * radius * Math.cos(angle) };
+      });
+    }
+    case 'scatter': {
+      // Free positions that keep each node near the next: a walk over a grid by rows, by columns,
+      // or spiralling inwards, as the seed chooses, each node nudged within its cell.
+      const cell = { x: across * 1.35, y: down * 1.5 };
+      const rows = rowsFor(cell);
+      const columns = Math.ceil(count / rows);
+      const walk = ['rows', 'columns', 'spiral'][Math.floor(options.random('scatter.walk') * 3)];
+      const cells: Point[] = [];
+      if (walk === 'spiral')
+        for (let ring = 0; cells.length < rows * columns; ring++) {
+          const [left, top, right, bottom] = [ring, ring, columns - 1 - ring, rows - 1 - ring];
+          for (let x = left; x <= right; x++) cells.push({ x, y: top });
+          for (let y = top + 1; y <= bottom; y++) cells.push({ x: right, y });
+          if (bottom > top) for (let x = right - 1; x >= left; x--) cells.push({ x, y: bottom });
+          if (right > left) for (let y = bottom - 1; y > top; y--) cells.push({ x: left, y });
+        }
+      else
+        for (let i = 0; i < rows * columns; i++) {
+          const major = walk === 'rows' ? columns : rows;
+          const line = Math.floor(i / major);
+          const along = line % 2 ? major - 1 - (i % major) : i % major;
+          cells.push(walk === 'rows' ? { x: along, y: line } : { x: line, y: along });
+        }
+      return indices.map((i) => ({
+        x: (cells[i].x + (options.random(`scatter.${i}.x`) - 0.5) * 0.5) * cell.x,
+        y: (cells[i].y + (options.random(`scatter.${i}.y`) - 0.5) * 0.5) * cell.y
+      }));
+    }
+    default:
+      // A line, and any form meant for another structure.
+      return indices.map((i) => ({ x: i * across, y: 0 }));
+  }
+}
+
+function treeCentres(
+  form: Form,
+  { root, children }: Extract<Structure, { kind: 'tree' }>,
+  { across, down }: Step,
+  random: (key: string) => number
+): Map<number, Point> {
+  // Leaves take consecutive slots and a parent sits over the middle of its children; depth is the
+  // number of links from the root. The indented form lists nodes in order instead, by depth.
+  const slot = new Map<number, number>();
+  const depth = new Map<number, number>();
+  const order: number[] = [];
+  let leaves = 0;
+  const visit = (node: number, level: number) => {
+    depth.set(node, level);
+    order.push(node);
+    const kids = children.get(node) ?? [];
+    if (!kids.length) slot.set(node, leaves++);
+    else {
+      for (const kid of kids) visit(kid, level + 1);
+      slot.set(node, ((slot.get(kids[0]) ?? 0) + (slot.get(kids[kids.length - 1]) ?? 0)) / 2);
+    }
+  };
+  visit(root, 0);
+  const place = (node: number): Point => {
+    const s = slot.get(node) ?? 0;
+    const d = depth.get(node) ?? 0;
+    switch (form) {
+      case 'tree-right':
+        return { x: d * across * 1.4, y: s * down };
+      case 'radial': {
+        // Rings round the root, over a sweep the seed chooses.
+        const sweep = (1.2 + random('radial.sweep') * 0.8) * Math.PI;
+        const angle = (s / Math.max(1, leaves)) * sweep;
+        const radius = d * Math.max(across, down) * 1.2;
+        return { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+      }
+      case 'indented':
+        return { x: d * across * 0.6, y: order.indexOf(node) * down };
+      default:
+        return { x: s * across, y: d * down * 1.4 };
+    }
+  };
+  return new Map(order.map((node) => [node, place(node)]));
+}
+
+function layerCentres(
+  form: Form,
+  { nodes, parents }: Extract<Structure, { kind: 'layers' }>,
+  { across, down }: Step,
+  random: (key: string) => number
+): Map<number, Point> {
+  // Each node sits one layer below its deepest parent; within a layer, nodes are ordered by where
+  // their parents are, with the seed breaking ties.
+  const layer = new Map<number, number>();
+  const layerOf = (node: number, seen = new Set<number>()): number => {
+    if (layer.has(node)) return layer.get(node) as number;
+    seen.add(node);
+    const above = (parents.get(node) ?? []).filter((parent) => !seen.has(parent));
+    const value = above.length ? Math.max(...above.map((parent) => layerOf(parent, seen))) + 1 : 0;
+    layer.set(node, value);
+    return value;
+  };
+  for (const node of nodes) layerOf(node);
+  const layers: number[][] = [];
+  for (const node of nodes) (layers[layer.get(node) ?? 0] ??= []).push(node);
+  const position = new Map<number, number>();
+  for (const row of layers.filter(Boolean)) {
+    const weight = (node: number) => {
+      const above = (parents.get(node) ?? []).map((parent) => position.get(parent) ?? 0);
+      return (
+        (above.length ? above.reduce((sum, p) => sum + p, 0) / above.length : 0) +
+        random(`layer.${node}`) * 0.01
+      );
+    };
+    row.sort((a, b) => weight(a) - weight(b));
+    row.forEach((node, i) => position.set(node, i - (row.length - 1) / 2));
+  }
+  const sideways = form === 'layers-right';
+  return new Map(
+    nodes.map((node) => {
+      const along = (position.get(node) ?? 0) * (sideways ? down : across);
+      const deep = (layer.get(node) ?? 0) * (sideways ? across : down) * 1.4;
+      return [node, sideways ? { x: deep, y: along } : { x: along, y: deep }];
+    })
+  );
+}
+
+// How far a form may be spread along one axis to match its space, so it stays recognisable.
+const largestStretch = 2.5;
+
+/**
+ * A form spread along whichever axis falls short of the space's proportions, by up to
+ * largestStretch, so it fills the space rather than leaving it empty on one side.
+ */
+function stretched(
+  centres: Map<number, Point>,
+  sizeOf: (node: number) => Size,
+  aspect: number
+): Map<number, Point> {
+  const nodes = [...centres.keys()];
+  const points = nodes.map((node) => centres.get(node) as Point);
+  const { width, height } = extentOf(points, nodes.map(sizeOf));
+  const ratio = width / Math.max(1, height);
+  // Near enough already; a slight stretch would only distort the form.
+  if (Math.abs(Math.log(ratio / aspect)) < Math.log(1.15)) return centres;
+  const mean = {
+    x: points.reduce((sum, { x }) => sum + x, 0) / points.length,
+    y: points.reduce((sum, { y }) => sum + y, 0) / points.length
+  };
+  const [sx, sy] =
+    ratio < aspect
+      ? [Math.min(largestStretch, aspect / ratio), 1]
+      : [1, Math.min(largestStretch, ratio / aspect)];
+  return new Map(
+    nodes.map((node, i) => [
+      node,
+      { x: mean.x + (points[i].x - mean.x) * sx, y: mean.y + (points[i].y - mean.y) * sy }
+    ])
+  );
+}
+
+/** The bounds a set of centres covers with boxes of these sizes. */
+export function extentOf(centres: readonly Point[], sizes: readonly Size[]): Size {
+  const left = Math.min(...centres.map(({ x }, i) => x - sizes[i].width / 2));
+  const right = Math.max(...centres.map(({ x }, i) => x + sizes[i].width / 2));
+  const top = Math.min(...centres.map(({ y }, i) => y - sizes[i].height / 2));
+  const bottom = Math.max(...centres.map(({ y }, i) => y + sizes[i].height / 2));
+  return { width: right - left, height: bottom - top };
+}

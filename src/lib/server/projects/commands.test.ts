@@ -1518,7 +1518,7 @@ describe('submitProjectFeedback', () => {
       element: {
         id: `${line}:1`,
         label: 'Linear search',
-        layouts: [{ node: `${line}:1`, seed: 7, chain: 'snake' }]
+        layouts: [{ node: `${line}:1`, seed: 7, form: 'snake' }]
       }
     };
     const submit = (content: ElementReference[]) =>
@@ -1567,7 +1567,7 @@ describe('submitProjectFeedback', () => {
                   {
                     node: `${line}:1`,
                     seed: 7,
-                    chain: 'snake',
+                    form: 'snake',
                     source: expect.objectContaining({ line, column: 1 })
                   }
                 ]

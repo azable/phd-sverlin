@@ -9,6 +9,7 @@
 import {
   arrange,
   keyedRandom,
+  linkKey,
   type Anchor,
   type ArrangeBox,
   type ArrangeOptions,
@@ -28,7 +29,7 @@ export type SpanInput = {
   parts: KeyedAnchor[];
   options: Pick<
     ArrangeOptions,
-    'template' | 'align' | 'links' | 'constraints' | 'flow' | 'chain' | 'curve' | 'gap' | 'aspect'
+    'template' | 'align' | 'links' | 'constraints' | 'flow' | 'form' | 'curve' | 'gap' | 'aspect'
   >;
 };
 
@@ -66,6 +67,11 @@ export function solveSpan(inputs: readonly SpanInput[]): SpanLayout {
     ...new Set(lists.flatMap((list) => list ?? []).map((text) => text.trim()))
   ];
   const [first] = inputs;
+  // Links at every step decide the structure; ones that come and go are drawn on top of it.
+  const idsAt = inputs.map(
+    ({ options }) => new Set((options.links ?? []).flatMap((link) => linkKey(link) ?? []))
+  );
+  const permanent = new Set([...idsAt[0]].filter((id) => idsAt.every((ids) => ids.has(id))));
   const solved = arrange(boxes, {
     ...first.options,
     links: unionLinks(inputs.map(({ options }) => options.links)),
@@ -74,6 +80,7 @@ export function solveSpan(inputs: readonly SpanInput[]): SpanLayout {
     aspect: Math.min(...inputs.map(({ options }) => options.aspect ?? 16 / 9)),
     anchors,
     parts,
+    permanent,
     random: keyedRandom(first.seed, 'layout')
   });
   return {

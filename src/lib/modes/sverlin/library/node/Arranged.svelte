@@ -22,7 +22,7 @@
     type LinkSpec,
     type Template
   } from './arrange';
-  import type { ChainShape } from './chain';
+  import type { Form } from './forms';
   import { paletteColor } from './palette';
   import { measure, spacings, strokeWidths } from './presets';
   import type { Align, Spacing } from './props';
@@ -32,7 +32,7 @@
     align,
     constraints = [],
     flow,
-    chain,
+    form,
     curve,
     layoutSeed,
     gap,
@@ -43,8 +43,8 @@
     align?: Align;
     constraints?: readonly string[];
     flow?: 'x' | 'y';
-    /** The shape a chain of links takes; unset, the seed draws one. */
-    chain?: ChainShape;
+    /** The form the linked structure takes; unset, the seed draws one. */
+    form?: Form;
     curve?: 'straight' | 'curved';
     /**
      * A seed for this arrangement alone, so a layout a participant liked stays the same in every
@@ -85,7 +85,7 @@
     width: number;
     height: number;
     edges: ArrangeEdge[];
-    choices: { chain?: string; curve: 'straight' | 'curved' };
+    choices: { form?: string; curve?: 'straight' | 'curved' };
     styles: Record<string, LinkStyle>;
   }>();
   // Bumped when a nested arrangement settles, to lay out again with its new size.
@@ -162,6 +162,9 @@
       ...(dataset.svLink ? { id: dataset.svLink } : {}),
       ...(dataset.curve === 'straight' || dataset.curve === 'curved'
         ? { curve: dataset.curve }
+        : {}),
+      ...(dataset.bend !== undefined && Number.isFinite(Number(dataset.bend))
+        ? { bend: Number(dataset.bend) }
         : {})
     }));
     const styles: Record<string, LinkStyle> = Object.fromEntries(
@@ -229,7 +232,7 @@
       links: specs,
       constraints,
       flow,
-      chain,
+      form,
       curve,
       gap: space,
       aspect: spaceAspect()
@@ -291,7 +294,7 @@
 <div
   class="sv-arranged"
   data-sv-layout-seed={drawSeed}
-  data-sv-chain={result?.choices.chain}
+  data-sv-form={result?.choices.form}
   data-sv-curve={result?.choices.curve}
   style:width={result ? `${result.width}px` : undefined}
   style:height={result ? `${result.height}px` : undefined}
@@ -340,6 +343,7 @@
             class="hit"
             d={edge.path}
             data-sv-node={edge.id}
+            data-sv-bend={Math.round(edge.bend * 100) / 100}
             data-sv-label={style?.label ?? edge.link.replace(' -> ', ' → ').replace(' - ', ' – ')}
           />
         {/if}

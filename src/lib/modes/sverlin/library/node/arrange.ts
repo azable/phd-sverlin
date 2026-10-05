@@ -9,15 +9,8 @@
 
 import { Layout } from 'webcola/dist/src/layout';
 
-import {
-  chainCentres,
-  chainShapes,
-  extentOf,
-  findChain,
-  routeCurve,
-  type Box,
-  type ChainShape
-} from './chain';
+import { extentOf, findStructure, formCentres, formsFor, sequenceForms, type Form } from './forms';
+import { routeCurve, type Box } from './route';
 
 /** One child to place: its key and its size in pixels. */
 export type ArrangeBox = { key: string; width: number; height: number };
@@ -42,6 +35,8 @@ export type ArrangeEdge = {
   id?: string;
   /** The middle of the curve, where a label goes. */
   middle: { x: number; y: number };
+  /** The bend the curve took, as a fraction of its length to one side: 0 is straight. */
+  bend: number;
 };
 
 export type ArrangeResult = {
@@ -56,8 +51,8 @@ export type ArrangeResult = {
   choices: LayoutChoices;
 };
 
-/** The choices an arrangement drew: its chain's shape, if any, and how its arrows curve. */
-export type LayoutChoices = { chain?: ChainShape; curve: 'straight' | 'curved' };
+/** The choices an arrangement drew: the form of its linked structure, if any, and how arrows curve. */
+export type LayoutChoices = { form?: Form; curve?: 'straight' | 'curved' };
 
 export type Point = { x: number; y: number };
 
@@ -81,8 +76,10 @@ export type ArrangeOptions = {
   gap: number;
   /** A random number in [0, 1) for a key, or undefined to start every child at the centre. */
   random?: (key: string) => number;
-  /** The shape a chain of links takes; unset, the seed draws one that suits the space. */
-  chain?: ChainShape;
+  /** The form the linked structure takes; unset, the seed draws one that suits the space. */
+  form?: Form;
+  /** Keys (see linkKey) of the links present at every step; only these decide the structure. Unset, all do. */
+  permanent?: ReadonlySet<string>;
   /** Whether arrows prefer to run straight or to curve; unset, the seed draws it. */
   curve?: 'straight' | 'curved';
   /** The width to height of the space the arrangement has, which shapes fill. */
@@ -103,7 +100,24 @@ export type LinkSpec = {
   directed: boolean;
   id?: string;
   curve?: 'straight' | 'curved';
+  /** An exact bend for this link, as a fraction of its length to one side (0 is straight). */
+  bend?: number;
 };
+
+/** A link as a spec, whether written as text such as "a -> b" or given as one; undefined if unreadable. */
+function linkSpecOf(link: string | LinkSpec): LinkSpec | undefined {
+  if (typeof link !== 'string') return link;
+  const match = /^\s*(\S+)\s*(->|-)\s*(\S+)\s*$/u.exec(link);
+  return match ? { from: match[1], to: match[3], directed: match[2] === '->' } : undefined;
+}
+
+const linkText = ({ from, to, directed }: LinkSpec) => `${from} ${directed ? '->' : '-'} ${to}`;
+
+/** What identifies a link across steps: its id, or else its ends and direction. */
+export function linkKey(link: string | LinkSpec): string | undefined {
+  const spec = linkSpecOf(link);
+  return spec && (spec.id ?? linkText(spec));
+}
 
 /** A box a link attaches to: inside child `box`, relative to that child's top-left. */
 export type Anchor = { box: number; x: number; y: number; width: number; height: number };
@@ -186,16 +200,12 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
   }
 
   const links = (options.links ?? []).flatMap((link) => {
-    let spec: LinkSpec;
-    if (typeof link === 'string') {
-      const match = /^\s*(\S+)\s*(->|-)\s*(\S+)\s*$/u.exec(link);
-      if (!match) {
-        problems.push(`"${link}" is not a link such as "a -> b".`);
-        return [];
-      }
-      spec = { from: match[1], to: match[3], directed: match[2] === '->' };
-    } else spec = link;
-    const text = `${spec.from} ${spec.directed ? '->' : '-'} ${spec.to}`;
+    const spec = linkSpecOf(link);
+    if (!spec) {
+      problems.push(`"${link as string}" is not a link such as "a -> b".`);
+      return [];
+    }
+    const text = linkText(spec);
     const from = anchorOf(spec.from, text);
     const to = anchorOf(spec.to, text);
     return !from || !to || from.box === to.box
@@ -209,7 +219,9 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
             directed: spec.directed,
             text,
             id: spec.id,
-            curve: spec.curve
+            key: spec.id ?? text,
+            curve: spec.curve,
+            bend: spec.bend
           }
         ];
   });
@@ -249,13 +261,13 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     })
   );
   const room = Math.max(3 * options.gap, arrowRoom);
-  const laidLinks = links.map(({ source, target, from, to, directed }) => {
+  const laidLinks = links.map(({ source, target, from, to, directed, id, key }) => {
     const along = (from[flowExtent] + to[flowExtent]) / 2 + room;
     const ideal = options.flow
       ? along
       : (Math.max(from.width, from.height) + Math.max(to.width, to.height)) / 2 + room;
     const placed = across.has(`${source} ${target}`);
-    return { source, target, from, to, ideal, along, directed, placed };
+    return { source, target, from, to, ideal, along, directed, placed, id, key };
   });
   // A link between boxes a relation already places is drawn but not laid out; otherwise its graph
   // distances would pull the rest askew.
@@ -263,45 +275,65 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     ({ placed }) => !placed
   );
 
-  // A chain of links in a free arrangement, such as a linked list, takes a shape: the view's, or one
-  // the seed draws from those whose proportions suit the space, so presentations vary in look.
-  const chain =
+  // The links of a free arrangement are read for the structure they make, such as a path, a tree,
+  // or a layered graph, from links present at every step only, so a link that comes and goes is
+  // drawn but does not change it. The structure takes a form: the view's, or one the seed draws from
+  // those whose proportions suit the space, so presentations vary in look.
+  const structure =
     options.template === 'free'
-      ? findChain(
+      ? findStructure(
           boxes.length,
-          laidLinks.filter(({ directed, placed }) => directed && !placed)
+          laidLinks.filter(
+            ({ directed, placed, key }) =>
+              directed && !placed && (!options.permanent || options.permanent.has(key))
+          )
         )
       : undefined;
   const aspect = options.aspect ?? 16 / 9;
   const along = options.flow === 'y' ? 'y' : 'x';
-  const chainSizes = (chain?.nodes ?? []).map((node) => boxes[node]);
-  // Shapes lie along x; a vertical flow turns them, swapping each centre's axes.
-  const shaped = (shape: ChainShape) => {
-    const centres = chainCentres(shape, chainSizes, {
+  const sizeOf = (node: number) => boxes[node];
+  // Sequence forms lie along x; a vertical flow turns them, swapping each centre's axes.
+  const placedIn = (form: Form) => {
+    if (!structure) return undefined;
+    const turned = along === 'y' && (sequenceForms as readonly Form[]).includes(form);
+    const centres = formCentres(form, structure, sizeOf, {
       room,
-      aspect: along === 'y' ? 1 / aspect : aspect,
-      cycle: chain?.cycle ?? false,
+      aspect: turned ? 1 / aspect : aspect,
       random: options.random ?? (() => 0.5)
     });
-    return along === 'y' ? centres?.map(({ x, y }) => ({ x: y, y: x })) : centres;
+    return turned
+      ? new Map([...centres].map(([node, { x, y }]) => [node, { x: y, y: x }]))
+      : centres;
   };
-  let shape: ChainShape | undefined;
-  if (chain && options.chain) shape = options.chain;
-  else if (chain) {
-    const candidates = chainShapes.filter((candidate) => {
-      if (candidate === 'scatter') return true;
-      if (chain.cycle ? candidate === 'line' || candidate === 'wave' : candidate === 'ring')
-        return false;
-      const centres = shaped(candidate);
-      if (!centres) return false;
-      const { width, height } = extentOf(centres, chainSizes);
-      // Only shapes that can fill the space once stretched, within half again of its proportions.
-      return Math.abs(Math.log(width / Math.max(1, height) / aspect)) < Math.log(1.5);
-    });
-    shape = candidates[Math.floor((options.random?.('chain.shape') ?? 0) * candidates.length)];
+  let form: Form | undefined;
+  if (structure) {
+    // A flow the view sets rules out forms whose links would run another way.
+    const against: Record<'x' | 'y', readonly Form[]> = {
+      x: ['tree-down', 'layers-down', 'radial', 'indented'],
+      y: ['tree-right', 'layers-right', 'radial']
+    };
+    const candidates = formsFor(structure).filter(
+      (candidate) => !options.flow || !against[options.flow].includes(candidate)
+    );
+    if (options.form && candidates.includes(options.form)) form = options.form;
+    else {
+      if (options.form)
+        problems.push(
+          `The links make a ${structure.kind}, which cannot take the form "${options.form}".`
+        );
+      // Only forms that can fill the space once stretched, within half again of its proportions.
+      const fitting = candidates.filter((candidate) => {
+        const centres = placedIn(candidate);
+        if (!centres) return false;
+        const { width, height } = extentOf([...centres.values()], [...centres.keys()].map(sizeOf));
+        return Math.abs(Math.log(width / Math.max(1, height) / aspect)) < Math.log(1.5);
+      });
+      const choices = fitting.length ? fitting : candidates;
+      form = choices[Math.floor((options.random?.('form') ?? 0) * choices.length)];
+    }
   }
-  const chainCentresPlaced = shape ? shaped(shape) : undefined;
-  const inChain = new Set(shape ? chain?.nodes : []);
+  const formed = form ? placedIn(form) : undefined;
+  const inStructure = new Set(formed ? formed.keys() : []);
 
   // Along a flow, each directed link's target anchor sits at least a link's length further along
   // than its source anchor, so arrows run with the flow. A link that closes a cycle cannot point
@@ -321,8 +353,8 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
       ins.set(target, (ins.get(target) ?? 0) + 1);
     }
     for (const { source, target, from, to, along } of forward) {
-      // A shaped chain places its own links.
-      if (inChain.has(source) && inChain.has(target)) continue;
+      // A formed structure places its own links.
+      if (inStructure.has(source) && inStructure.has(target)) continue;
       flowing.push({
         axis,
         left: source,
@@ -356,31 +388,22 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
         : {})
     }));
 
-  // A shaped chain is placed outright, round the middle, and held there while the rest settles round
-  // it.
-  if (chain && chainCentresPlaced) {
-    const meanX = chainCentresPlaced.reduce((sum, { x }) => sum + x, 0) / chain.nodes.length;
-    const meanY = chainCentresPlaced.reduce((sum, { y }) => sum + y, 0) / chain.nodes.length;
-    // The shape places each node's anchor, such as its value cell, so links meet on the shape even
-    // where labels make a box lopsided.
+  // A formed structure is placed outright, round the middle of the start area, and held there while
+  // the rest settles round it. The form places each node's anchor, such as its value cell, so links
+  // meet on the form even where labels make a box lopsided.
+  if (formed) {
+    const points = [...formed.values()];
+    const meanX = points.reduce((sum, { x }) => sum + x, 0) / points.length;
+    const meanY = points.reduce((sum, { y }) => sum + y, 0) / points.length;
     const anchorOfBox = (box: number) =>
       laidLinks.find(({ source }) => source === box)?.from ??
       laidLinks.find(({ target }) => target === box)?.to;
-    chain.nodes.forEach((node, i) => {
+    for (const [node, point] of formed) {
       const anchor = anchorOfBox(node);
-      // Round the middle of the start area, so the chain sits the same way at every step.
-      nodes[node].x =
-        startArea.width / 2 +
-        chainCentresPlaced[i].x -
-        meanX -
-        (anchor ? offsetOf(anchor, 'x') : 0);
-      nodes[node].y =
-        startArea.height / 2 +
-        chainCentresPlaced[i].y -
-        meanY -
-        (anchor ? offsetOf(anchor, 'y') : 0);
+      nodes[node].x = startArea.width / 2 + point.x - meanX - (anchor ? offsetOf(anchor, 'x') : 0);
+      nodes[node].y = startArea.height / 2 + point.y - meanY - (anchor ? offsetOf(anchor, 'y') : 0);
       nodes[node].fixed = 1;
-    });
+    }
   }
 
   // Nothing pulls separate groups together (children joined by links or relations count as one), so
@@ -437,7 +460,7 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
 
   // Arrows are curves between anchors that bend round everything else: the other children, and the
   // labels inside their own two children. The seed sets how readily they curve, from straight
-  // where nothing is in the way to an arc either side; scattered chains always curve.
+  // where nothing is in the way to an arc either side; scattered forms always curve.
   const boxAt = (anchor: Anchor): Box => {
     const { x, y } = placements[anchor.box];
     return {
@@ -451,13 +474,7 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
   const overlaps = (a: Box, b: Box) =>
     Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
     Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
-  const side = (options.random?.('curve.side') ?? 0.5) < 0.5 ? 1 : -1;
-  const curvy = options.curve
-    ? options.curve === 'curved'
-    : shape === 'scatter' || (options.random?.('curve.style') ?? 0) >= 0.5;
-  const bends = [0.15, 0.3, 0.5].flatMap((bend) => [bend * side, -bend * side]);
-  const preference = curvy ? [...bends, 0] : [0, ...bends];
-  const edges = links.map(({ from: tail, to: head, directed, text, id, curve }) => {
+  const edges = links.map(({ from: tail, to: head, directed, text, id, curve, bend }) => {
     const [from, to] = [boxAt(tail), boxAt(head)];
     const obstacles = [
       ...boxes.flatMap((_, box) =>
@@ -482,21 +499,29 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
         .filter((part) => !overlaps(part, box));
       return { outer, parts };
     };
-    // A link component may set its own curve style.
-    const order = curve ? (curve === 'curved' ? [...bends, 0] : [0, ...bends]) : preference;
-    const { path, start, end, halfway } = routeCurve(from, to, obstacles, order, {
+    // Each link draws its own curve, from a seed keyed by its id: straight where it can or curving,
+    // and to which side, unless its own curve or bend, or its arrangement's curve, says otherwise. A
+    // bend is used exactly; otherwise the link takes the first bend in its order that is clear.
+    const draw = (key: string) => options.random?.(`link ${id ?? text}.${key}`) ?? 0.5;
+    const style = curve ?? options.curve;
+    const curvy = style ? style === 'curved' : form === 'scatter' || draw('style') >= 0.5;
+    const side = draw('side') < 0.5 ? 1 : -1;
+    const bends = [0.15, 0.3, 0.5].flatMap((amount) => [amount * side, -amount * side]);
+    const order = bend !== undefined ? [bend] : curvy ? [...bends, 0] : [0, ...bends];
+    const routed = routeCurve(from, to, obstacles, order, {
       from: surround(tail, from),
       to: surround(head, to)
     });
     return {
-      x1: start.x,
-      y1: start.y,
-      x2: end.x,
-      y2: end.y,
-      path,
+      x1: routed.start.x,
+      y1: routed.start.y,
+      x2: routed.end.x,
+      y2: routed.end.y,
+      path: routed.path,
       directed,
       link: text,
-      middle: halfway,
+      middle: routed.halfway,
+      bend: routed.bend,
       ...(id ? { id } : {})
     };
   });
@@ -507,7 +532,7 @@ export function arrange(boxes: readonly ArrangeBox[], options: ArrangeOptions): 
     width,
     height,
     problems,
-    choices: { ...(shape ? { chain: shape } : {}), curve: curvy ? 'curved' : 'straight' }
+    choices: { ...(form ? { form } : {}), ...(options.curve ? { curve: options.curve } : {}) }
   };
 }
 

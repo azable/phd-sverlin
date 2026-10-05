@@ -159,7 +159,7 @@ describe('links along a flow', () => {
     template: 'free',
     links: ['n0 -> n1', 'n1 -> n2'],
     flow: 'x',
-    chain: 'line',
+    form: 'line',
     gap: 6,
     anchors,
     random: () => 0.25
@@ -188,7 +188,7 @@ describe('links along a flow', () => {
     const ring = arrange(columns, {
       template: 'free',
       links: ['n0 -> n1', 'n1 -> n2', 'n2 -> n0'],
-      chain: 'ring',
+      form: 'ring',
       aspect: 1,
       gap: 6,
       anchors,
@@ -251,25 +251,26 @@ describe('layout choices', () => {
       gap: 8,
       random: keyedRandom(seed, 'layout')
     });
-    expect(first.choices.chain).toBeDefined();
-    expect(['straight', 'curved']).toContain(first.choices.curve);
+    expect(first.choices.form).toBeDefined();
+    // Each link draws its own curve, so the arrangement reports a curve style only when pinned.
+    expect(first.choices.curve).toBeUndefined();
     expect(again.placements).toEqual(first.placements);
     expect(again.choices).toEqual(first.choices);
     // Different places in a view derive different seeds.
     expect(layoutSeedFor(5, '50:1')).not.toBe(layoutSeedFor(5, '60:1'));
   });
 
-  it('keeps a pinned chain shape and curve style', () => {
+  it('keeps a pinned form and curve style', () => {
     for (const seed of [1, 2, 3]) {
       const result = arrange(list, {
         template: 'free',
         links,
         gap: 8,
-        chain: 'wave',
+        form: 'wave',
         curve: 'straight',
         random: keyedRandom(seed, 'layout')
       });
-      expect(result.choices).toEqual({ chain: 'wave', curve: 'straight' });
+      expect(result.choices).toEqual({ form: 'wave', curve: 'straight' });
     }
   });
 });
@@ -303,5 +304,64 @@ describe('link components', () => {
       Math.abs((x2 - x1) * (cy1 - y1) - (y2 - y1) * (cx1 - x1)) / Math.hypot(x2 - x1, y2 - y1);
     expect(offLine(numbers[0])).toBeLessThan(1);
     expect(offLine(numbers[1])).toBeGreaterThan(1);
+  });
+});
+
+describe('link bends', () => {
+  const boxes = [
+    { key: 'a', width: 40, height: 40 },
+    { key: 'b', width: 40, height: 40 }
+  ];
+
+  it('draws a pinned bend exactly, and reports the bend each link drew', () => {
+    for (const seed of [1, 2, 3]) {
+      const result = arrange(boxes, {
+        template: 'free',
+        gap: 8,
+        links: [
+          { from: 'a', to: 'b', directed: true, id: '3:1', bend: -0.3 },
+          { from: 'b', to: 'a', directed: true, id: '4:1' }
+        ],
+        random: keyedRandom(seed, 'layout')
+      });
+      expect(result.edges[0].bend).toBe(-0.3);
+      const again = arrange(boxes, {
+        template: 'free',
+        gap: 8,
+        links: [
+          { from: 'a', to: 'b', directed: true, id: '3:1', bend: -0.3 },
+          { from: 'b', to: 'a', directed: true, id: '4:1', bend: result.edges[1].bend }
+        ],
+        random: keyedRandom(seed + 10, 'layout')
+      });
+      // Pinning the reported bend keeps the curve's shape relative to its ends.
+      expect(again.edges[1].bend).toBe(result.edges[1].bend);
+    }
+  });
+});
+
+describe('forms along a flow', () => {
+  const tree = ['r', 'a', 'b', 'c', 'd'].map((key) => ({ key, width: 40, height: 30 }));
+  const links = ['r -> a', 'r -> b', 'a -> c', 'a -> d'];
+
+  it('draws only forms whose links run the way the flow points', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const across = arrange(tree, {
+        template: 'free',
+        links,
+        gap: 8,
+        flow: 'x',
+        random: keyedRandom(seed, 'layout')
+      });
+      const down = arrange(tree, {
+        template: 'free',
+        links,
+        gap: 8,
+        flow: 'y',
+        random: keyedRandom(seed, 'layout')
+      });
+      expect(['tree-down', 'radial', 'indented']).not.toContain(across.choices.form);
+      expect(['tree-right', 'radial']).not.toContain(down.choices.form);
+    }
   });
 });

@@ -114,12 +114,12 @@ A matrix needs no snippet: `<Node items={grid} layout="column" nested="row" />` 
 
 - `key`: a name for a child that its parent's links and relations refer to, such as `<Node key="a" value={3} />`. Every direct child is placed, keyed or not; put content that belongs together, such as a value and its index, in one child node. A link attaches to the node its key names: give the key to the value inside a child, or to a child holding one value among labels (such as a value with an index above and a pointer name below), and the arrow meets the value, not the labels.
 - `constraints`: an array of relations between children, each `'a relation b'`: `above`, `below`, `leftOf`, and `rightOf` place a directly above, below, left of, or right of b, centred on it and one gap away, and `sameRow` and `sameColumn` centre a and b on one horizontal or vertical line in either order. They work in free layouts, and in rows and columns as long as they agree with the line. Use relations for what the picture must show, such as a pointer label above its node or a caption below the structure, and leave the rest to the layout.
-- `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree. A chain of links (each node with one link in and one out) then runs straight.
-- `chain`: when a free layout's links form a chain or a cycle, such as a linked list, its shape: `'line'`, `'snake'` (rows read back and forth), `'wave'`, `'arc'`, `'ring'`, or `'scatter'` (free positions that keep each node near the next). Unset, every presentation draws a shape that suits the space it has and stretches it to fill that space, and arrows curve round other nodes and labels.
-- `curve`: `'straight'` or `'curved'`, whether arrows prefer to run straight or to curve; unset, each presentation draws it.
-- `layoutSeed`: keeps this node's layout of its children the same in every presentation. Each arrangement draws its shape, spacing, and curves from a seed of its own, which selections report with the element; when the participant likes a layout ("keep this layout but …"), set `layoutSeed` on the node that arranges it to the reported seed, so that layout stays while everything else still varies. Pin `chain` or `curve` only if the participant names them.
+- `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree; only forms that run that way are drawn.
+- `form`: the shape a free layout gives the structure its links make. The structure is read from the arrows present at every step (a link that comes and goes is drawn on top of it but does not change it): a path such as a linked list, a cycle, a tree, or a layered graph (acyclic, with nodes that have several parents). Any structure can lie along its reading order (a path in link order, a tree depth first, a layered graph each node after its parents) as `'line'`, `'snake'` (rows read back and forth), `'wave'`, `'arc'`, or `'scatter'` (free positions that keep each node near the next). A cycle can also take `'ring'`; a tree `'tree-down'`, `'tree-right'`, `'radial'`, or `'indented'`; a layered graph `'layers-down'` or `'layers-right'`. Unset, every presentation draws a form that suits the space it has and stretches it to fill that space, and arrows curve round other nodes and labels.
+- `curve`: `'straight'` or `'curved'`, whether this node's arrows prefer to run straight or to curve; unset, each link draws its own.
+- `layoutSeed`: keeps this node's layout of its children the same in every presentation. Each arrangement draws its shape, spacing, and curves from a seed of its own, which selections report with the element; when the participant likes a layout ("keep this layout but …"), set `layoutSeed` on the node that arranges it to the reported seed, so that layout stays while everything else still varies. Pin `form` or `curve` only if the participant names them.
 
-Leave `chain` and `flow` unset, or draw them in the design block, and draw which relations to include, so presentations differ until the participant says what they prefer; fix them only when asked, such as for a list that must run left to right.
+Leave `form` and `flow` unset, or draw them in the design block, and draw which relations to include, so presentations differ until the participant says what they prefer; fix them only when asked, such as for a list that must run left to right.
 
 ```svelte
 <Node layout="free" constraints={['head above ' + first]} flow="x">
@@ -140,7 +140,8 @@ Leave `chain` and `flow` unset, or draw them in the design block, and draw which
 - `directed`: `false` for a plain line instead of an arrow.
 - `dashed`, `stroke` (a palette name or CSS colour), and `strokeWidth` (`'thin'`, `'thick'`, or pixels): how it is drawn.
 - `label`: a short text shown at the middle of the link, such as `next` or `head`.
-- `curve`: `'straight'` or `'curved'` for this link alone.
+- `curve`: `'straight'` or `'curved'` for this link alone; unset, it draws its own, whatever its siblings do.
+- `bend`: an exact curve, how far the link bows to one side as a fraction of its length (`0` straight, `0.3` a clear arc, negative the other side). A selected link reports the bend it drew; when the participant likes a curve, set `bend` on that `<Link>` to the reported value.
 
 Links can come and go with the steps: wrap one in `{#if}` to show it only while it matters, such as the pointer being followed. Its place is kept across the animation, so nothing moves when it appears.
 

@@ -59,17 +59,21 @@ describe('element references', () => {
       v.is(
         messageContentSegmentSchema,
         layout([
-          { node: '50:1', seed: 606668785, chain: 'snake', curve: 'curved' },
+          { node: '50:1', seed: 606668785, form: 'snake', curve: 'curved' },
           { node: 'frame', seed: 3 }
         ])
       )
     ).toBe(true);
     for (const bad of [
-      [{ node: '50:1', seed: 1, chain: 'spiral' }],
+      [{ node: '50:1', seed: 1, form: 'spiral' }],
       [{ node: 'body', seed: 1 }],
       [{ node: '50:1', seed: 1.5 }]
     ])
       expect(v.is(messageContentSegmentSchema, layout(bad))).toBe(false);
+    // References saved before chain was renamed form still load, as a form.
+    expect(
+      v.parse(messageContentSegmentSchema, layout([{ node: '50:1', seed: 1, chain: 'ring' }]))
+    ).toStrictEqual(layout([{ node: '50:1', seed: 1, form: 'ring' }]));
   });
 });
 
