@@ -330,11 +330,10 @@ function withGeneratedScripts(
 /**
  * Tag every <Node> in the view with the line and column (both from 1) of its tag in the authored
  * source, as the hidden prop __ref, so a rendered node can be traced back to the markup that drew
- * it when a participant selects it for feedback. The prop goes on the tag's own line, so line
- * numbers are unchanged.
+ * it when a participant selects it for feedback, and an arrangement varies by its own key. The prop goes on the tag's own line, so line numbers are unchanged.
  */
 function withNodeRefs(svelteSource: string, ast: unknown, source: string): string {
-  const tags: number[] = [];
+  const tags: { start: number; name: string }[] = [];
   visit(ast, (node) => {
     const tag = node as {
       type: string;
@@ -349,12 +348,12 @@ function withNodeRefs(svelteSource: string, ast: unknown, source: string): strin
         `Node props starting with __, such as , are reserved for the library.`,
         { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
       );
-    tags.push(tag.start);
+    tags.push({ start: tag.start, name: tag.name });
   });
   let tagged = svelteSource;
-  for (const start of tags.sort((a, b) => b - a)) {
+  for (const { start, name } of tags.sort((a, b) => b.start - a.start)) {
     const { line, column } = sourcePosition(source, start);
-    const end = start + '<Node'.length;
+    const end = start + name.length + 1;
     tagged = `${tagged.slice(0, end)} __ref="${line}:${column + 1}"${tagged.slice(end)}`;
   }
   return tagged;
@@ -409,7 +408,8 @@ const allowedImports: Record<string, (path: string) => boolean> = {
     runtime(path) ||
     ['virtual:component', 'virtual:trace', 'virtual:atoms', 'sverlin'].includes(path),
   component: (path) => runtime(path) || path === 'sverlin',
-  library: (path) => runtime(path) || /^\.\.?\//u.test(path)
+  // The constraint layout engine, by its one module, which needs none of WebCola's d3 adaptor.
+  library: (path) => runtime(path) || /^\.\.?\//u.test(path) || path === 'webcola/dist/src/layout'
 };
 
 function sandboxModules(component: string, states: string, atoms: string): Plugin {
@@ -426,7 +426,7 @@ function sandboxModules(component: string, states: string, atoms: string): Plugi
         if (args.path === 'virtual:trace') return { path: 'states.json', namespace: 'trace' };
         if (args.path === 'virtual:atoms') return { path: 'atoms.json', namespace: 'atoms' };
         if (args.path === 'sverlin') return { path: 'index.ts', namespace: 'library' };
-        if (args.namespace === 'library' && !runtime(args.path)) {
+        if (args.namespace === 'library' && !runtime(args.path) && /^\.\.?\//u.test(args.path)) {
           const path = libraryPath(posix.join(posix.dirname(args.importer), args.path));
           return path
             ? { path, namespace: 'library' }
@@ -514,13 +514,28 @@ function frameSettings(value: unknown): FrameSettings {
         .join(', ')}.`
     );
   };
-  const unknown = Object.keys(given).find(
-    (key) => !['ratio', 'justify', 'align', 'padding'].includes(key)
-  );
+  const settings = ['ratio', 'justify', 'align', 'padding', 'layout', 'constraints', 'links'];
+  const unknown = Object.keys(given).find((key) => !settings.includes(key));
   if (unknown)
     throw new InvalidSvelteSourceError(
-      `The design value frame has no setting ${unknown}; use ratio, justify, align, or padding.`
+      `The design value frame has no setting ${unknown}; use ${settings.join(', ')}.`
     );
+  // Relations and links are short strings, checked in full where the page lays out.
+  const strings = (key: 'constraints' | 'links') => {
+    const list = given[key];
+    if (list === undefined) return undefined;
+    if (
+      !Array.isArray(list) ||
+      list.length > 100 ||
+      !list.every((entry) => typeof entry === 'string' && entry.length <= 200)
+    )
+      throw new InvalidSvelteSourceError(
+        `The design value frame.${key} must be a list of strings such as 'note below cells'.`
+      );
+    return list as string[];
+  };
+  const constraints = strings('constraints');
+  const links = strings('links');
   const padding = given.padding ?? 'large';
   if (!(typeof padding === 'number' && Number.isFinite(padding)))
     choice('padding', spacings, 'large');
@@ -528,6 +543,9 @@ function frameSettings(value: unknown): FrameSettings {
     ratio: choice('ratio', frameRatios, '16:9') as FrameSettings['ratio'],
     justify: choice('justify', justifications) as FrameSettings['justify'],
     align: choice('align', alignments) as FrameSettings['align'],
-    padding: padding as FrameSettings['padding']
+    padding: padding as FrameSettings['padding'],
+    layout: choice('layout', { column: 1, row: 1, free: 1 }) as FrameSettings['layout'],
+    ...(constraints ? { constraints } : {}),
+    ...(links ? { links } : {})
   };
 }

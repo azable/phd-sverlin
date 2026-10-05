@@ -71,3 +71,23 @@ export function provideNodeIds(): void {
 export function nodeIdsContext(): NodeIds | undefined {
   return getContext<NodeIds | undefined>('sverlin:node-ids');
 }
+
+/** Make the presentation's seed available to library components that vary by it. */
+export function provideSeed(seed: number): void {
+  setContext('sverlin:seed', seed);
+}
+
+export function seedContext(): number {
+  return getContext<number | undefined>('sverlin:seed') ?? 1;
+}
+
+/** The arrangement around a node, told when a nested arrangement's size settles. */
+export type ArrangementParent = { changed(): void };
+
+export function provideArrangementParent(parent: ArrangementParent): void {
+  setContext('sverlin:arrangement', parent);
+}
+
+export function arrangementParentContext(): ArrangementParent | undefined {
+  return getContext<ArrangementParent | undefined>('sverlin:arrangement');
+}

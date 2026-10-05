@@ -22,11 +22,11 @@ Titles and annotations are nodes too: `<Node size="xlarge" weight="bold">Linear 
 
 Page:
 
-Every view sits in a page frame: a 16:9 canvas laid out at a fixed logical size (1200 pixels wide) and scaled to fit, so every presentation renders identically whatever the pane size. Participants select nodes by clicking or dragging a box, to point at them in feedback; they scroll to zoom, drag with the middle button or with Space held to pan, and double-click empty space to reset, and the view is kept as they step through. Every node is selectable, so draw each thing a participant might want to point at, such as a cell, a pointer name, or a caption, as a node of its own. Props starting with `__` are reserved for the library. The frame arranges the view's top-level nodes in a column; shape and place them with the design value `frame` (see the block guide), such as `const frame = { justify: 'between' };` to put a title at the top and a note at the bottom. Prefer the 16:9 default unless the participant asks for another shape. Write the top-level nodes directly rather than wrapping the whole view in one node.
+Every view sits in a page frame: a 16:9 canvas laid out at a fixed logical size (1200 pixels wide) and scaled to fit, so every presentation renders identically whatever the pane size. Participants select nodes by clicking or dragging a box, to point at them in feedback; they scroll to zoom, drag with the middle button or with Space held to pan, and double-click empty space to reset, and the view is kept as they step through. Every node is selectable, so draw each thing a participant might want to point at, such as a cell, a pointer name, or a caption, as a node of its own. Props starting with `__` are reserved for the library. The frame arranges the view's top-level nodes in a column, or, varying by presentation, in a free layout; shape and place them with the design value `frame` (see the block guide), which can also fix the layout and relate top-level nodes by their `key`, such as `const frame = { justify: 'between' };` to put a title at the top and a note at the bottom. Prefer the 16:9 default unless the participant asks for another shape. Write the top-level nodes directly rather than wrapping the whole view in one node.
 
 Arrangement:
 
-- `layout`: `'row'`, `'column'`, `'wrap'` (a row that wraps onto new lines), or `'grid'`; arranges a collection's items (default `'row'`) or, when set, a node's children.
+- `layout`: `'row'`, `'column'`, `'wrap'` (a row that wraps onto new lines), `'grid'`, or `'free'` (placed by layout; see Free layout below); arranges a collection's items (default `'row'`) or, when set, a node's children.
 - `gap`: space between arranged items (default `'medium'`).
 - `align`: `'start'`, `'center'`, or `'end'`; how arranged items line up across the layout direction (rows default to `'start'`, columns to `'center'`).
 - `justify`: `'start'`, `'center'`, `'end'`, `'between'`, `'around'`, or `'evenly'`; how arranged items spread along the layout direction (default `'start'`).
@@ -107,3 +107,28 @@ Example, with domain, input, algorithm, design, and a script-free view:
 ```
 
 A matrix needs no snippet: `<Node items={grid} layout="column" nested="row" />` draws each inner array as a row of nodes.
+
+## Free layout, links, and relations
+
+`layout="free"` places a node's children by layout instead of in a line or grid: use it for linked structures such as linked lists, trees, and graphs, and for groups whose arrangement is open. The children are kept clear of each other and gathered compactly, starting from the presentation's seed, so a pair shows two arrangements while every presentation draws the same way each time. A node hugs its children whatever its layout.
+
+- `key`: a name for a child that its parent's links and relations refer to, such as `<Node key="a" value={3} />`. Every direct child is placed, keyed or not; put content that belongs together, such as a value and its index, in one child node.
+- `links`: an array of strings, `'a -> b'` for an arrow from a to b or `'a - b'` for a line, such as `links={edges.map(([from, to]) => from + ' -> ' + to)}`. Links are drawn in any layout and pull linked children together in a free one.
+- `constraints`: an array of relations between children, each `'a relation b'`: `above`, `below`, `leftOf`, and `rightOf` place a directly above, below, left of, or right of b, centred on it and one gap away, and `sameRow` and `sameColumn` centre a and b on one horizontal or vertical line in either order. They work in free layouts, and in rows and columns as long as they agree with the line. Use relations for what the picture must show, such as a pointer label above its node or a caption below the structure, and leave the rest to the layout.
+- `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree.
+
+Draw `layout`, `flow`, and which relations to include in the design block when the request leaves them open.
+
+```svelte
+<Node
+  layout="free"
+  links={[...next.map(([from, to]) => from + ' -> ' + to), 'head -> ' + first]}
+  constraints={['head above ' + first]}
+  flow="x"
+>
+  {#each nodes as node (node.id)}
+    <Node key={node.id} value={node.value} fill={node.id === current ? 'amber' : undefined} />
+  {/each}
+  <Node key="head" size="small" color="neutral">head</Node>
+</Node>
+```

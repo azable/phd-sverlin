@@ -7,6 +7,8 @@
 <script lang="ts" generics="T">
   import { untrack, type Snippet } from 'svelte';
 
+  import Arranged from './Arranged.svelte';
+  import type { Template } from './arrange';
   import Node from './Node.svelte';
   import {
     defaultsContext,
@@ -69,6 +71,10 @@
     strokeWidth,
     minSize,
     children,
+    key,
+    links,
+    constraints,
+    flow,
     __ref,
     __id,
     __type
@@ -116,6 +122,14 @@
     /** The smallest width and height. */
     minSize?: MinSize;
     children?: Snippet;
+    /** A name its parent's links and constraints refer to this node by. */
+    key?: string;
+    /** Links between children by key: 'a -> b' draws an arrow, 'a - b' a line. */
+    links?: readonly string[];
+    /** Relations between children by key: above, below, leftOf, rightOf, sameRow, sameColumn. */
+    constraints?: readonly string[];
+    /** In a free layout, the axis arrows point along: 'x' (rightwards) or 'y' (downwards). */
+    flow?: 'x' | 'y';
     /** Internal: the source position of this node's tag, added by the compiler. */
     __ref?: string;
     /** Internal: an id given by the node this one stands for, such as a collection or a renderer's caller. */
@@ -204,7 +218,39 @@
   );
   const alignment = $derived(alignments[align ?? (arrangement === 'column' ? 'center' : 'start')]);
   const justification = $derived(justifications[justify ?? 'start']);
+  // Free layouts, and rows or columns with links or relations, are placed by constraint layout;
+  // other arrangements are CSS flex and grid, which solve the same constraints in the browser.
+  const solved = $derived<Template | undefined>(
+    arrangement === 'free'
+      ? 'free'
+      : (arrangement === 'row' || arrangement === 'column') &&
+          (links?.length || constraints?.length)
+        ? arrangement
+        : undefined
+  );
 </script>
+
+{#snippet contents()}
+  {#if collection}
+    {#each items ?? [] as child, index (index)}
+      {#if item}
+        {@render item(child, index, types?.itemType(items, index))}
+      {:else if Array.isArray(child)}
+        <Node items={child} layout={nested} __id={id && `${id}/${index}`} />
+      {:else}
+        <Node
+          value={child !== null && typeof child === 'object'
+            ? JSON.stringify(child)
+            : (child as Primitive)}
+          type={types?.itemType(items, index)}
+          __id={id && `${id}/${index}`}
+        />
+      {/if}
+    {/each}
+  {:else}
+    {@render children?.()}
+  {/if}
+{/snippet}
 
 {#if rendered}
   {@render rendered.snippet(value ?? null, callerProps)}
@@ -212,6 +258,7 @@
   <div
     class="sv-node {font ?? ''}"
     data-sv-node={id}
+    data-sv-key={key}
     data-sv-type={type ?? __type}
     class:cell={!arrangement && resolvedShape === 'box'}
     style:font-size={fontSize}
@@ -232,7 +279,19 @@
       ? Math.min(Math.max(opacity, 0), 1)
       : undefined}
   >
-    {#if arrangement}
+    {#if solved}
+      <Arranged
+        template={solved}
+        align={align ?? (arrangement === 'column' ? 'center' : 'start')}
+        {links}
+        {constraints}
+        {flow}
+        gap={gap ?? drawn?.gap ?? 'medium'}
+        scope={id ?? 'node'}
+      >
+        {@render contents()}
+      </Arranged>
+    {:else if arrangement}
       <div
         class="items {arrangement}"
         style:--sv-columns={gridColumns}
@@ -240,25 +299,7 @@
         style:align-items={alignment}
         style:justify-content={justification}
       >
-        {#if collection}
-          {#each items ?? [] as child, index (index)}
-            {#if item}
-              {@render item(child, index, types?.itemType(items, index))}
-            {:else if Array.isArray(child)}
-              <Node items={child} layout={nested} __id={id && `${id}/${index}`} />
-            {:else}
-              <Node
-                value={child !== null && typeof child === 'object'
-                  ? JSON.stringify(child)
-                  : (child as Primitive)}
-                type={types?.itemType(items, index)}
-                __id={id && `${id}/${index}`}
-              />
-            {/if}
-          {/each}
-        {:else}
-          {@render children?.()}
-        {/if}
+        {@render contents()}
       </div>
     {:else if children}
       {@render children()}

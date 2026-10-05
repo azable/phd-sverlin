@@ -244,11 +244,22 @@ describe('single-component Svelte compilation', () => {
       'frame.ratio must be one of'
     );
     await expect(
-      compileSvelteComponent(design("const frame = { layout: 'row' };"))
-    ).rejects.toThrow('frame has no setting layout');
+      compileSvelteComponent(design("const frame = { spread: 'row' };"))
+    ).rejects.toThrow('frame has no setting spread');
     await expect(
       compileSvelteComponent(design("const frame = { padding: 'huge' };"))
     ).rejects.toThrow('frame.padding must be one of');
+    await expect(
+      compileSvelteComponent(
+        design("const frame = { layout: 'free', constraints: ['note below cells'], links: [] };")
+      )
+    ).resolves.toBeDefined();
+    await expect(
+      compileSvelteComponent(design("const frame = { layout: 'grid' };"))
+    ).rejects.toThrow('frame.layout must be one of');
+    await expect(
+      compileSvelteComponent(design('const frame = { constraints: [1] };'))
+    ).rejects.toThrow('frame.constraints must be a list of strings');
   });
 
   it('tags every Node with its source position and reserves __ props', async () => {

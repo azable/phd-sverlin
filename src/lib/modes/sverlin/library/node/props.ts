@@ -4,7 +4,7 @@
 export type Primitive = string | number | boolean | null;
 
 /** How a node arranges its items or children. */
-export type Layout = 'row' | 'column' | 'wrap' | 'grid';
+export type Layout = 'row' | 'column' | 'wrap' | 'grid' | 'free';
 
 /** How arranged items line up across the layout direction. */
 export type Align = 'start' | 'center' | 'end';
@@ -24,7 +24,16 @@ export type FrameSettings = {
   /** Unset, it comes from the drawn defaults. */
   align?: Align;
   padding: Spacing;
+  /** How the view's top-level nodes are arranged; unset, it comes from the drawn defaults. */
+  layout?: FrameLayout;
+  /** Relations between top-level nodes by key, as for a node's constraints. */
+  constraints?: string[];
+  /** Links between top-level nodes by key, as for a node's links. */
+  links?: string[];
 };
+
+/** The arrangements the page frame offers its top-level nodes. */
+export type FrameLayout = 'column' | 'row' | 'free';
 
 /** A preset of frame, spacing, and text defaults that a node's own props override. */
 export type NodeShape = 'box' | 'card' | 'plain';
@@ -94,7 +103,7 @@ export type ShapeDefaults = {
 export type NodeDefaults = {
   box: ShapeDefaults;
   card: ShapeDefaults;
-  frame: { justify: Justify; align: Align };
+  frame: { justify: Justify; align: Align; layout: FrameLayout };
   gap: Spacing;
   font: NodeFont;
 };

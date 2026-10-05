@@ -17,6 +17,7 @@ describe('drawn Node defaults', () => {
     }
     expect(defaultsPolicy['frame.justify'].pick).toContain(first.frame.justify);
     expect(defaultsPolicy['frame.align'].pick).toContain(first.frame.align);
+    expect(defaultsPolicy['frame.layout'].pick).toContain(first.frame.layout);
     expect(defaultsPolicy.gap.pick).toContain(first.gap);
     expect(defaultsPolicy.font.pick).toContain(first.font);
   });

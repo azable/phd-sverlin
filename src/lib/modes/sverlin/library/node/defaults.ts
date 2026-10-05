@@ -7,6 +7,7 @@
 
 import type {
   Align,
+  FrameLayout,
   Justify,
   NodeDefaults,
   NodeFont,
@@ -55,6 +56,8 @@ export const defaultsPolicy = {
   // How a frame spreads and aligns its children, where the frame leaves them unset.
   'frame.justify': { pick: ['start', 'center', 'between', 'evenly'] },
   'frame.align': { pick: ['start', 'center'] },
+  // A column of top-level nodes, or a free arrangement that differs with every seed.
+  'frame.layout': { pick: ['column', 'free'] },
   gap: { pick: ['small', 'medium', 'large'] },
   font: { pick: ['sans', 'serif', 'mono'] }
 } satisfies Record<string, Choice | TintRange>;
@@ -91,7 +94,11 @@ export function drawDefaults(random: (key: string) => number): NodeDefaults {
   return {
     box: shape('box'),
     card: shape('card'),
-    frame: { justify: choose('frame.justify') as Justify, align: choose('frame.align') as Align },
+    frame: {
+      justify: choose('frame.justify') as Justify,
+      align: choose('frame.align') as Align,
+      layout: choose('frame.layout') as FrameLayout
+    },
     gap: choose('gap') as Spacing,
     font: choose('font') as NodeFont
   };

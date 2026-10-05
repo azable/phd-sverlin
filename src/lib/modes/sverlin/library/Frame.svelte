@@ -9,7 +9,14 @@
 <script lang="ts">
   import { untrack, type Component } from 'svelte';
 
-  import { defaultsContext, provideNodeIds } from './type-context';
+  import {
+    defaultsContext,
+    provideArrangementParent,
+    provideNodeIds,
+    provideSeed
+  } from './type-context';
+  import Arranged from './node/Arranged.svelte';
+  import type { Template } from './node/arrange';
   import {
     alignments,
     frameRatios,
@@ -33,7 +40,45 @@
   } = $props();
 
   provideNodeIds();
+  provideSeed(untrack(() => (typeof props.seed === 'number' ? props.seed : 1)));
   const drawn = defaultsContext();
+
+  // The top-level nodes form a column or row by CSS, or are placed by constraint layout when the
+  // arrangement is free or the design adds relations or links between them.
+  const rootLayout = $derived(settings.layout ?? drawn?.frame.layout ?? 'column');
+  const rootSolved = $derived<Template | undefined>(
+    rootLayout === 'free' || settings.constraints?.length || settings.links?.length
+      ? rootLayout
+      : undefined
+  );
+  let frameElement = $state<HTMLDivElement>();
+  let rootElement = $state<HTMLDivElement>();
+  // An arranged root larger than the frame's inside is scaled down to fit it.
+  let rootSize = $state({ width: 0, height: 0 });
+  let fit = $state(1);
+  // Bumped whenever an arrangement settles, so selection outlines are measured again.
+  let layoutRevision = $state(0);
+  provideArrangementParent({
+    changed() {
+      queueMicrotask(() => {
+        const block = rootElement?.querySelector<HTMLElement>(':scope > * > .sv-arranged');
+        if (block && frameElement) {
+          const style = getComputedStyle(frameElement);
+          const inside = {
+            width: frameElement.clientWidth - parseFloat(style.paddingLeft) * 2,
+            height: frameElement.clientHeight - parseFloat(style.paddingTop) * 2
+          };
+          rootSize = { width: block.offsetWidth, height: block.offsetHeight };
+          fit = Math.min(
+            1,
+            inside.width / Math.max(1, rootSize.width),
+            inside.height / Math.max(1, rootSize.height)
+          );
+        }
+        layoutRevision++;
+      });
+    }
+  });
   const width = frameWidth;
   const height = $derived(Math.round(frameWidth / frameRatios[settings.ratio]));
 
@@ -290,7 +335,7 @@
   let measured = $state<Box[]>([]);
   $effect(() => {
     const ids = [...selected];
-    void [viewport.width, viewport.height];
+    void [viewport.width, viewport.height, layoutRevision];
     const frame = requestAnimationFrame(() => {
       const element = canvas?.querySelector<HTMLElement>('.sv-frame');
       const origin = element?.getBoundingClientRect();
@@ -354,6 +399,7 @@
   ondblclick={onDoubleClick}
 >
   <div
+    bind:this={frameElement}
     class="sv-frame"
     style:width="{width}px"
     style:height="{height}px"
@@ -362,8 +408,31 @@
     style:gap={measure(spacings, drawn?.gap ?? 'medium')}
     style:justify-content={justifications[settings.justify ?? drawn?.frame.justify ?? 'start']}
     style:align-items={alignments[settings.align ?? drawn?.frame.align ?? 'center']}
+    style:flex-direction={rootLayout === 'row' && !rootSolved ? 'row' : 'column'}
   >
-    <View {...props} />
+    {#if rootSolved}
+      <div
+        class="sv-root"
+        bind:this={rootElement}
+        style:width="{rootSize.width * fit}px"
+        style:height="{rootSize.height * fit}px"
+      >
+        <div class="sv-root-inner" style:transform="scale({fit})">
+          <Arranged
+            template={rootSolved}
+            align={settings.align ?? drawn?.frame.align ?? 'center'}
+            links={settings.links}
+            constraints={settings.constraints}
+            gap={drawn?.gap ?? 'medium'}
+            scope="frame"
+          >
+            <View {...props} />
+          </Arranged>
+        </div>
+      </div>
+    {:else}
+      <View {...props} />
+    {/if}
   </div>
   <svg
     class="sv-edge"
@@ -432,6 +501,13 @@
     box-sizing: border-box;
     transform-origin: center;
     background: var(--sv-surface);
+  }
+  /* An arranged root takes its scaled size, so the frame places it like any other block. */
+  .sv-root {
+    flex: none;
+  }
+  .sv-root-inner {
+    transform-origin: top left;
   }
   .sv-edge {
     pointer-events: none;
