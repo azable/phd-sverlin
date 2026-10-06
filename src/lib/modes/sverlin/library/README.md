@@ -12,7 +12,7 @@ A node is one of three things:
 - content: `<Node>any text or markup</Node>` shows its children, for titles, explanations, captions, indices, and pointer names;
 - a collection: `<Node items={values} layout="row" />` arranges child nodes. Without an `item` snippet, each primitive item becomes a value node (drawn by its type's renderer, if typed) and each array item a nested collection; to control each item, give `{#snippet item(value, index, type)} <Node {value} {type} … /> {/snippet}`, where `type` is the item's atomic type name or `undefined`.
 
-Titles and annotations are nodes too: `<Node size="xlarge" weight="bold">Linear search</Node>` makes a title, and arranging a node's children with `layout` puts an index, caption, or pointer name beside or above a value: `<Node layout="column"><Node size="small" color="neutral">{index}</Node><Node {value} /></Node>`. Without `layout`, children flow as ordinary text.
+Titles and annotations are nodes too: `<Node>Linear search</Node>` makes a title, and arranging a node's children with `layout` puts an index, caption, or pointer name beside or above a value: `<Node layout="column"><Node color="neutral">{index}</Node><Node {value} /></Node>`. Without `layout`, children flow as ordinary text.
 
 ### Props
 
@@ -22,7 +22,7 @@ Titles and annotations are nodes too: `<Node size="xlarge" weight="bold">Linear 
 
 Page:
 
-Every view sits in a page frame: a 16:9 canvas, wider than it is tall, laid out at a fixed logical size (1200 pixels wide) and scaled to fit, so every presentation renders identically whatever the pane size. Participants select nodes by clicking or dragging a box, to point at them in feedback; they scroll to zoom, drag with the middle button or with Space held to pan, and double-click empty space to reset, and the view is kept as they step through. Every node is selectable, so draw each thing a participant might want to point at, such as a cell, a pointer name, or a caption, as a node of its own. Props starting with `__` are reserved for the library. The frame arranges the view's top-level nodes in a column, or, varying by presentation, in a free layout; shape and place them with the design value `frame` (see the block guide), which can also fix the layout and relate top-level nodes by their `key`, such as `const frame = { justify: 'between' };` to put a title at the top and a note at the bottom. Prefer the 16:9 default unless the participant asks for another shape, and use its width: lay sequences out across it rather than down it. Leave the frame's `layout` unset so the top-level arrangement varies between presentations. Write the top-level nodes directly rather than wrapping the whole view in one node.
+Every view sits in a page frame: a 16:9 canvas, wider than it is tall, laid out at a fixed logical size (1200 pixels wide) and scaled to fit, so every presentation renders identically whatever the pane size. Participants select nodes by clicking or dragging a box, to point at them in feedback; they scroll to zoom, drag with the middle button or with Space held to pan, and double-click empty space to reset, and the view is kept as they step through. Every node is selectable, so draw each thing a participant might want to point at, such as a cell, a pointer name, or a caption, as a node of its own. Props starting with `__` are reserved for the library. The frame arranges the view's top-level nodes in a column, or, in a few presentations, in a free layout; shape and place them with the design value `frame` (see the block guide), which can also fix the layout and relate top-level nodes by their `key`, such as `const frame = { justify: 'between' };` to put a title at the top and a note at the bottom. Prefer the 16:9 default unless the participant asks for another shape, and use its width: lay sequences out across it rather than down it. Leave the frame's `layout` unset so the top-level arrangement varies between presentations. Write the top-level nodes directly rather than wrapping the whole view in one node.
 
 Arrangement:
 
@@ -55,9 +55,9 @@ Types:
 
 - `type`: an atomic type name, such as `'Int'`. If the view defines a renderer snippet for that type, or for a type it refines, the node is drawn by it (see the block guide's Type renderers); otherwise it draws its default box with the type's `unit` after the value.
 
-Unspecified props vary by themselves: every presentation draws its own `radius`, `strokeWidth` (sometimes none at all), `padding`, and a pale fill and stroke tint for boxes and cards, the page frame's `justify` and `align`, the gap between arranged items, and the page font, so two presentations of a pair look different even when no prop is set. Set a prop whenever its value matters, such as a colour that shows which element is current; a node's own props and its type's renderer always win over drawn defaults. To use the plain presets instead, put `const defaults = 'fixed';` in the design block, but only when the participant asks for a consistent or plainer look: liking a presentation is not a request to stop varying the others.
+Unspecified props vary by themselves: every presentation draws its own `radius`, `strokeWidth` (sometimes none at all), `padding`, and a pale fill and stroke tint for boxes and cards, the page frame's `justify` and `align`, the gap between arranged items, and the page font, so two presentations of a pair look different even when no prop is set. A node's own props and its type's renderer always win over drawn defaults, so every prop you set takes a choice away from the presentations. To use the plain presets instead, put `const defaults = 'fixed';` in the design block, but only when the participant asks for a consistent or plainer look: liking a presentation is not a request to stop varying the others.
 
-Every prop is a natural design dimension, especially `layout`, `gap`, `radius`, `font`, and `size`: draw values in the design block and pass them through, such as `layout={flow}`, or use them to decide which annotation nodes to show. Type renderers can use them too, so seeded presentations differ in presentation while showing the same steps. Prefer a few drawn values used consistently over ad hoc values on individual nodes.
+Start unopinionated. Write the structure, and set only the props that carry meaning, such as a colour that shows which element is current. Leave `shape`, `radius`, `padding`, `gap`, `strokeWidth`, `minSize`, `font`, `size`, and `weight` unset, and add no `<style>`, unless the meaning needs them or the participant asked: unset, they already vary between presentations, more widely than a pick between a few values would. Draw meaningful colours in the design block from the palette, so which colour shows "current" varies while staying consistent within a presentation. Use design picks for choices the library cannot vary by itself, such as a collection's `layout` or which annotation nodes to show, and leave the frame unset. How a domain type appears is such a choice too: the same type can map to quite different views, and a type's renderer or the view can draw between them, so presentations differ in what they show as well as how it looks. When the participant names a preference, fix just that, and keep everything else drawn.
 
 Example, with domain, input, algorithm, design, and a script-free view:
 
@@ -81,28 +81,24 @@ Example, with domain, input, algorithm, design, and a script-free view:
 </script>
 
 <script lang="sverlin" design>
-  const intRadius = pick(['medium', 'full']);
-  const flow = pick(['row', 'column']);
+  const flow = pick(['row', 'column', 'wrap']);
   const showIndices = chance(0.5);
-  const textSize = real(0.9, 1.3);
+  const current = pick(['amber', 'red', 'purple']);
+  const visited = pick(['blue', 'green']);
 </script>
 
-{#snippet Int(value, node)}
-  <Node radius={intRadius} {value} {...node} />
-{/snippet}
-
-<Node size="xlarge" weight="bold">Array walk</Node>
+<Node>Array walk</Node>
 <Node items={values} layout={flow}>
   {#snippet item(value, index, type)}
     <Node layout="column">
-      {#if showIndices}<Node size="small" color="neutral">{index}</Node>{/if}
-      {@const colour = index === i ? 'amber' : index < i ? 'blue' : undefined}
+      {#if showIndices}<Node color="neutral">{index}</Node>{/if}
+      {@const colour = index === i ? current : index < i ? visited : undefined}
       <Node {value} {type} fill={colour} stroke={colour} />
-      {#if index === i}<Node size="small" color="neutral">i</Node>{/if}
+      {#if index === i}<Node color="neutral">i</Node>{/if}
     </Node>
   {/snippet}
 </Node>
-<Node shape="card" size={textSize}>
+<Node>
   {i < 0 ? 'Start at the left.' : i < values.length ? `Visiting index ${i}.` : 'Every cell visited.'}
 </Node>
 ```

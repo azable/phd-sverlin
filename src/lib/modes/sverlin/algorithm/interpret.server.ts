@@ -447,16 +447,16 @@ class Interpreter {
     );
     if (typeof label !== 'string' || !label.trim())
       this.#fail(node, 'yield labels must be non-empty strings.');
+    // Labels identify steps, so a repeated one is numbered by its occurrence, as in "Shift (2)";
+    // every presentation runs the same algorithm, so the numbering is the same in each.
     const trimmed = label.trim();
-    if (this.#labels.has(trimmed))
-      this.#fail(
-        node,
-        `Step labels must be unique, but "${trimmed}" was already used; include what distinguishes the step, such as \`Compare index \${i}\`.`
-      );
+    let unique = trimmed;
+    for (let occurrence = 2; this.#labels.has(unique); occurrence++)
+      unique = `${trimmed} (${occurrence})`;
     if (this.#trace.length >= algorithmLimits.maximumSteps)
       this.#fail(node, `The algorithm yielded more than ${algorithmLimits.maximumSteps} steps.`);
-    this.#labels.add(trimmed);
-    this.#trace.push({ label: trimmed, ...this.#state(node) });
+    this.#labels.add(unique);
+    this.#trace.push({ label: unique, ...this.#state(node) });
   }
 
   /**

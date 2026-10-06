@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrowserBundlePresentation } from '$lib/shared/presentations';
 import { recordText } from '$lib/server/projects/fingerprints';
 
+import { stepSignature } from '../signature.server';
 import { compileHtmlJs } from './compile.server';
 
 export async function buildHtmlJsPresentation(
@@ -17,8 +18,8 @@ export async function buildHtmlJsPresentation(
     presentationId: randomUUID(),
     format: 'browser-bundle-v1',
     mode: 'html-js',
-    stepSignature: 'single',
-    labels: ['Start'],
+    stepSignature: stepSignature(bundle.steps),
+    labels: bundle.steps,
     seed,
     source: recordText(source, 'application/json'),
     html: recordText(bundle.html, 'text/html'),

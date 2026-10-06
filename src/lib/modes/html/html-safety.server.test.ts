@@ -15,8 +15,17 @@ describe('HTML frame safety', () => {
         '<style>.bar{fill:#09f}</style><main><svg viewBox="0 0 10 10"><rect class="bar" width="10" height="4"></rect></svg></main>'
       )
     );
-    expect(result.rendered.frames[0].html).toContain('<svg');
+    expect(result.rendered.frames[0].html).toContain('<svg viewBox="0 0 10 10">');
     expect(result.rendered.frames[0].html).toContain('<style>');
+  });
+
+  it('keeps case-sensitive SVG attributes, and rejects handlers in any case', () => {
+    const svg =
+      '<svg viewBox="0 0 10 10" preserveAspectRatio="xMidYMid meet"><rect width="1" height="1"></rect></svg>';
+    expect(validateHtmlFramesManifest(manifest(svg)).rendered.frames[0].html).toBe(svg);
+    expect(() =>
+      validateHtmlFramesManifest(manifest('<svg viewBox="0 0 1 1" onLoad="x()"></svg>'))
+    ).toThrow(/static/);
   });
 
   it.each([

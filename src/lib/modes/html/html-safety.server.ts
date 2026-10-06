@@ -89,7 +89,7 @@ function sanitizeFrame(html: string): string {
     allowedAttributes: {
       '*': ['id', 'class', 'style', 'title', 'role', 'aria-*', 'data-*'],
       img: ['src', 'alt', 'width', 'height'],
-      svg: ['viewBox', 'width', 'height', 'fill', 'stroke', 'aria-*'],
+      svg: ['viewBox', 'width', 'height', 'preserveAspectRatio', 'fill', 'stroke', 'aria-*'],
       g: ['transform', 'fill', 'stroke', 'opacity'],
       path: ['d', 'fill', 'stroke', 'stroke-width', 'opacity', 'transform'],
       circle: ['cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'opacity'],
@@ -106,6 +106,8 @@ function sanitizeFrame(html: string): string {
     },
     allowedSchemes: ['data'],
     allowProtocolRelative: false,
+    // SVG attributes are case-sensitive, such as viewBox; lowercased, they would not match and be dropped.
+    parser: { lowerCaseAttributeNames: false },
     disallowedTagsMode: 'discard'
   });
   if (!rendered.trim()) throw new Error('HTML frames cannot be empty after validation.');

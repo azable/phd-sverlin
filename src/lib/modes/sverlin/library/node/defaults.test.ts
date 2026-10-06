@@ -22,6 +22,15 @@ describe('drawn Node defaults', () => {
     expect(defaultsPolicy.font.pick).toContain(first.font);
   });
 
+  it('lays the top level out freely in only a few presentations', () => {
+    const free = Array.from(
+      { length: 500 },
+      (_, seed) => drawDefaults(seed + 1).frame.layout
+    ).filter((layout) => layout === 'free').length;
+    expect(free).toBeGreaterThan(20);
+    expect(free).toBeLessThan(90);
+  });
+
   it('draws pale HSL tints within their ranges, sometimes the plain surface', () => {
     const fills = Array.from({ length: 200 }, (_, seed) => drawDefaults(seed + 1).box);
     const plain = fills.filter(({ fill }) => fill === 'var(--sv-surface)');

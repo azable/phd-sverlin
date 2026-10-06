@@ -432,12 +432,11 @@ describe('single-component Svelte compilation', () => {
     ).rejects.toMatchObject({ line: 3, column: 2 });
   });
 
-  it('rejects ambiguous step labels before storing playback metadata', async () => {
-    await expect(
-      compileSvelteComponent(
-        '<script lang="sverlin">yield "Same"; yield "Same";</script><h1>Hi</h1>'
-      )
-    ).rejects.toThrow('unique');
+  it('numbers repeated step labels so stored playback steps stay distinct', async () => {
+    const result = await compileSvelteComponent(
+      '<script lang="sverlin">yield "Same"; yield "Same";</script><h1>Hi</h1>'
+    );
+    expect(result.labels).toEqual(['Same', 'Same (2)']);
   });
 
   it('retains line and column for assistant source repair', async () => {

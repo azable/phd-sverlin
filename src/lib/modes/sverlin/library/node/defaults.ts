@@ -18,7 +18,8 @@ import type {
 } from './props';
 
 /** Choose one of a list of options. */
-type Choice = { pick: readonly string[] };
+/** Options drawn evenly, or in proportion to their weights when given. */
+type Choice = { pick: readonly string[]; weights?: readonly number[] };
 
 /**
  * A pale surface tint and a matching border, drawn in HSL. Low saturation and high lightness keep
@@ -56,8 +57,9 @@ export const defaultsPolicy = {
   // How a frame spreads and aligns its children, where the frame leaves them unset.
   'frame.justify': { pick: ['start', 'center', 'between', 'evenly'] },
   'frame.align': { pick: ['start', 'center'] },
-  // A column of top-level nodes, or a free arrangement that differs with every seed.
-  'frame.layout': { pick: ['column', 'free'] },
+  // A column of top-level nodes, or now and then a free arrangement that differs with every seed:
+  // free top-level layouts seldom read as well as a column.
+  'frame.layout': { pick: ['column', 'free'], weights: [9, 1] },
   gap: { pick: ['small', 'medium', 'large'] },
   font: { pick: ['sans', 'serif', 'mono'] }
 } satisfies Record<string, Choice | TintRange>;
@@ -72,8 +74,10 @@ export function drawDefaults(random: (key: string) => number): NodeDefaults {
   const within = (key: string, [min, max]: readonly [number, number]) =>
     Math.round(min + draw(key) * (max - min));
   const choose = (key: keyof typeof defaultsPolicy) => {
-    const options = (defaultsPolicy[key] as Choice).pick;
-    return options[Math.floor(draw(key) * options.length)];
+    const { pick: options, weights } = defaultsPolicy[key] as Choice;
+    if (!weights) return options[Math.floor(draw(key) * options.length)];
+    let left = draw(key) * weights.reduce((sum, weight) => sum + weight, 0);
+    return options.find((_, index) => (left -= weights[index]) < 0) ?? options[options.length - 1];
   };
   const drawTint = (key: string, range: TintRange) => {
     if (draw(`${key}.plain`) < range.plain)

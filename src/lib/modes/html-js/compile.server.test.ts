@@ -13,6 +13,25 @@ describe('HTML/JS packaging', () => {
     expect(result.javascript).toContain('Ready');
   });
 
+  it('declares one playback step per label, numbering repeats, and keeps static SVG', async () => {
+    const result = await compileHtmlJs({
+      format: 'html-js-v1',
+      steps: ['Start', 'Visit A', 'Visit A', 'Done'],
+      html: '<svg viewBox="0 0 10 10" width="100%" height="100%" preserveAspectRatio="xMidYMid meet"><line x1="0" y1="0" x2="5" y2="5" stroke="black"/><text x="1" y="9">A</text></svg>',
+      javascript: 'const step = window.__sverlinStep;'
+    });
+    expect(result.steps).toEqual(['Start', 'Visit A', 'Visit A (2)', 'Done']);
+    expect(result.html).toContain('preserveAspectRatio="xMidYMid meet"');
+    expect(result.html).toContain('<line x1="0" y1="0" x2="5" y2="5" stroke="black"></line>');
+    expect(result.html).toContain('<text x="1" y="9">A</text>');
+    // A source written before steps existed has the one step it always had.
+    const earlier = await compileHtmlJs({ format: 'html-js-v1', html: '<p>A</p>', javascript: '' });
+    expect(earlier.steps).toEqual(['Start']);
+    await expect(
+      compileHtmlJs({ format: 'html-js-v1', steps: [], html: '<p>A</p>', javascript: '' })
+    ).rejects.toThrow('The HTML/JS source is not valid');
+  });
+
   it('rejects static and dynamic imports, including computed targets', async () => {
     for (const javascript of [
       'import x from "x";',

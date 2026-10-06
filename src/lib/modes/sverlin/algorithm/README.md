@@ -40,7 +40,7 @@ A top-level snippet named after a domain type is that type's default renderer: e
 {/snippet}
 
 {#snippet Height(value, node)}
-  <Node shape="card" {...node}>{value}<small> cm</small></Node>
+  <Node {...node}>{value}<small> cm</small></Node>
 {/snippet}
 ```
 
@@ -49,7 +49,7 @@ A type without a renderer uses the renderer of the nearest type it refines, and 
 ## Steps
 
 - `yield 'label';` records a step: a copy of every top-level input and algorithm variable. Variables declared inside loops or blocks are not recorded; declare a loop index at the top level (`let i = Index(-1);`) and write `for (i = Index(0); ...)` when the view needs it. A top-level variable not yet declared at a step is `null`.
-- Labels must be unique across the whole algorithm, because they identify steps when presentations are compared. Inside loops, include what distinguishes the step, such as ``yield `Compare index ${i}`;``.
+- Labels identify steps when presentations are compared, so make each one say what distinguishes its step; a repeated label is numbered by its occurrence, as in "Shift (2)", which reads less clearly. Inside loops, include what distinguishes the step, such as ``yield `Compare index ${i}`;``.
 - `return;` stops the algorithm early.
 
 ## Atomic types
@@ -71,7 +71,7 @@ The view receives plain values; types only affect how nodes are drawn (see Type 
 - Draws are `pick(['row', 'grid'])`, `int(3, 6)` (inclusive), `real(0.5, 1.5)`, and `chance(0.3)`, each only in the value of a top-level `const`, either the whole value or inside its object and array literals, such as `const layout = pick(['row', 'grid']);` or `const look = { radius: pick(['medium', 'full']), sizes: [int(1, 3)] };`. Other design constants may combine earlier ones.
 - Use design values for styling, layout, wording, and library component props. The input and algorithm cannot see them, so steps never depend on the seed.
 - The design value `defaults` controls drawn `Node` defaults: `'drawn'` (the default) gives every presentation its own seeded radius, stroke width (sometimes none), padding, tints, gap, and font wherever props leave them unset; `'fixed'` uses the plain presets.
-- The design value `frame` shapes the page that holds the view's top-level nodes: a ratio such as `const frame = '4:3';`, or an object with any of `ratio` (`'16:9'`, the default, `'4:3'`, `'3:2'`, `'1:1'`, `'3:4'`, or `'9:16'`), `justify`, `align`, `padding` (default `'large'`), `layout` (`'column'`, `'row'`, or `'free'`), and `constraints` between top-level nodes by their `key`, as for a node's own (put `<Link>` components at the top of the view to join top-level nodes), and `layoutSeed` to keep a free top-level layout the participant liked, such as `const frame = { justify: 'between' };` or `const frame = { layout: 'free', constraints: ['note below cells'] };`. Settings may be drawn, as in `{ layout: pick(['column', 'free']) }`; unset `justify`, `align`, and `layout` are drawn defaults, so the top-level nodes form a column in some presentations and a free arrangement in others.
+- The design value `frame` shapes the page that holds the view's top-level nodes: a ratio such as `const frame = '4:3';`, or an object with any of `ratio` (`'16:9'`, the default, `'4:3'`, `'3:2'`, `'1:1'`, `'3:4'`, or `'9:16'`), `justify`, `align`, `padding` (default `'large'`), `layout` (`'column'`, `'row'`, or `'free'`), and `constraints` between top-level nodes by their `key`, as for a node's own (put `<Link>` components at the top of the view to join top-level nodes), and `layoutSeed` to keep a free top-level layout the participant liked, such as `const frame = { justify: 'between' };` or `const frame = { layout: 'free', constraints: ['note below cells'] };`. Settings may be drawn, as in `{ layout: pick(['column', 'free']) }`; unset `justify`, `align`, and `layout` are drawn defaults, so the top-level nodes form a column in most presentations and a free arrangement in a few.
 - Design names must differ from input and algorithm names.
 
 ## The subset

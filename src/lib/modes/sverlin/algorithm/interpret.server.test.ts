@@ -209,10 +209,12 @@ describe('input, design, and step selection', () => {
     expect(() => interpretDesign('const a = pick([]);', 1)).toThrow(/non-empty array/);
   });
 
-  it('requires unique step labels', () => {
-    expect(() => interpretAlgorithm('for (let i = Int(0); i < 2; i++) yield "Compare";')).toThrow(
-      /must be unique.*Compare/
-    );
+  it('numbers a repeated step label by its occurrence', () => {
+    expect(
+      interpretAlgorithm(
+        'for (let i = Int(0); i < 3; i++) yield "Compare"; yield "Compare (2)";'
+      ).map(({ label }) => label)
+    ).toEqual(['Compare', 'Compare (2)', 'Compare (3)', 'Compare (2) (2)']);
   });
 });
 
