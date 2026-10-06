@@ -29,12 +29,11 @@ import {
   justifications,
   minSizes,
   namedSizes,
-  presets,
   radii,
   spacings,
   strokeWidths
-} from './library/node/presets';
-import type { FrameSettings } from './library/node/props';
+} from './library/node/scales';
+import type { FrameSettings, NodeShape } from './library/node/props';
 import { keyedRandom } from './algorithm/random.server';
 
 // One component should be much smaller; these ceilings bound compilation and inline Timeline storage.
@@ -281,18 +280,13 @@ export async function bundlePresentation(
   const parameters = prepared.design
     ? interpretBlock(prepared.source, prepared.design, (body) => interpretDesign(body, seed))
     : {};
-  // Unspecified Node props are drawn from the seed unless the design opts out (see library/node/defaults.ts).
-  if (
-    parameters.defaults !== undefined &&
-    parameters.defaults !== 'fixed' &&
-    parameters.defaults !== 'drawn'
-  )
-    throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".', {
-      code: 'design_value',
-      start: designAt(prepared, 'defaults')
-    });
-  const defaults =
-    parameters.defaults === 'fixed' ? undefined : drawDefaults((key) => keyedRandom(seed, key));
+  // Unspecified Node props are always drawn from the seed (see library/node/defaults.ts).
+  if (parameters.defaults !== undefined)
+    throw new InvalidSvelteSourceError(
+      'The design value defaults is no longer supported: every presentation draws the props a view leaves unset. Remove it, and set the props that should stay the same.',
+      { code: 'design_value', start: designAt(prepared, 'defaults') }
+    );
+  const defaults = drawDefaults((key) => keyedRandom(seed, key));
   const frame = {
     ...located(() => frameSettings(parameters.frame), designAt(prepared, 'frame')),
     ...(prepared.topLevelLinks ? { linked: true } : {})
@@ -306,7 +300,7 @@ export async function bundlePresentation(
     ...parameters,
     __types: master[index].types,
     __frame: frame,
-    ...(defaults ? { __defaults: defaults } : {})
+    __defaults: defaults
   }));
   const result = await bundle(
     prepared.component,
@@ -323,7 +317,7 @@ export async function bundlePresentation(
     masterLabels: master.map(({ label }) => label),
     masterSteps,
     // Drawn defaults are recorded with the design values, so analysis sees each side's full look.
-    parameters: defaults ? { ...parameters, __defaults: defaults } : parameters
+    parameters: { ...parameters, __defaults: defaults }
   };
 }
 
@@ -493,7 +487,7 @@ export const libraryProps: Record<
     nested: named(Object.fromEntries(layouts.map((name) => [name, name])), false),
     item: null,
     type: null,
-    shape: named(presets, false),
+    shape: named({ box: 0, card: 0, plain: 0 } satisfies Record<NodeShape, 0>, false),
     fill: null,
     stroke: null,
     opacity: null,

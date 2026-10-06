@@ -25,7 +25,7 @@
   } from './arrange';
   import type { Form } from './forms';
   import { paletteColor } from './palette';
-  import { measure, spacings, strokeWidths } from './presets';
+  import { measure, spacings, strokeWidths } from './scales';
   import type { Align, Spacing } from './props';
 
   let {
@@ -62,9 +62,8 @@
   type LinkStyle = { dashed: boolean; label?: string; stroke?: string; strokeWidth?: string };
   const colourOf = (style?: LinkStyle) =>
     style?.stroke ? (paletteColor(style.stroke, 'stroke') ?? 'var(--sv-muted)') : 'var(--sv-muted)';
-  // Unset, a link takes the presentation's drawn width, or a fine line when defaults are fixed.
-  const drawn = defaultsContext();
-  const fine = `${drawn?.link.strokeWidth ?? 1.5}px`;
+  // Unset, a link takes the presentation's drawn width.
+  const fine = `${defaultsContext().link.strokeWidth}px`;
   const widthOf = (style?: LinkStyle) => {
     const width = style?.strokeWidth;
     if (!width) return fine;

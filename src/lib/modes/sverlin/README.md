@@ -67,7 +67,6 @@ The view receives plain values; types only affect how nodes are drawn (see Type 
 
 - Draws are `pick(['row', 'grid'])`, `int(3, 6)` (inclusive), `real(0.5, 1.5)`, and `chance(0.3)`, each only in the value of a top-level `const`, either the whole value or inside its object and array literals, such as `const layout = pick(['row', 'grid']);` or `const look = { radius: pick(['medium', 'full']), sizes: [int(1, 3)] };`. Other design constants may combine earlier ones. A seed always draws the same values.
 - Use design values for styling, layout, wording, and library component props. The input and algorithm cannot see them, so steps never depend on the seed.
-- The design value `defaults` is `'drawn'` (the default; see Start unopinionated) or `'fixed'` for the plain presets.
 - The design value `frame` shapes the page frame that holds the view's top-level nodes: a ratio such as `const frame = '4:3';`, or an object with any of `ratio` (`'16:9'`, the default, `'4:3'`, `'3:2'`, `'1:1'`, `'3:4'`, or `'9:16'`), `justify`, `align`, `padding` (default `'large'`), `layout` (`'column'`, `'row'`, or `'free'`), and `constraints` between top-level nodes by their `key`, as for a node's own (put `<Link>` components at the top of the view to join top-level nodes), and `layoutSeed` to keep a free top-level layout the participant liked, such as `const frame = { layout: 'free', constraints: ['note below cells'] };`. Unset `justify`, `align`, and `layout` are drawn (see Start unopinionated); leave `layout` unset.
 - Design names must differ from input and algorithm names.
 
@@ -97,9 +96,9 @@ Titles and annotations are nodes too: `<Node>Linear search</Node>` makes a title
 
 ### Props
 
-Props starting with `__` are reserved for the library. `shape` is a preset of defaults, and every value it sets can be overridden by the matching prop:
+Props starting with `__` are reserved for the library. `shape` picks which of the presentation's drawn looks a node takes (see Start unopinionated), and every value that look sets can be overridden by the matching prop:
 
-- `shape`: `'box'` (a cell: small padding, medium radius, thin neutral border and fill, a minimum size, and bold, slightly larger text; the default for a value), `'card'` (a bordered surface with medium padding), or `'plain'` (no border or padding; the default for content, and for collections except when one is drawn as a card). A bordered node with a layout draws its border around the whole group.
+- `shape`: `'box'` (a cell: a drawn border, padding, fill, minimum size, and text size and weight; the default for a value), `'card'` (a surface with a drawn border, padding, and fill), or `'plain'` (no border, padding, or fill; the default for content, and for collections except when one is drawn as a card). A bordered node with a layout draws its border around the whole group.
 
 Arrangement:
 
@@ -132,7 +131,7 @@ Types:
 
 ### Start unopinionated
 
-Every prop a view leaves unset has a default. Unless the design sets `const defaults = 'fixed';`, these defaults are drawn, so they differ between presentations:
+Every prop a view leaves unset has a default, and these defaults are drawn, so they differ between presentations:
 
 - on cells (`'box'`): radius, border width (sometimes none), padding, a pale fill and border tint (sometimes none), least size, and text size and weight;
 - on cards: radius, border width, padding, and tint;
@@ -150,7 +149,7 @@ authors use for meaning, such as 'amber' for the current element; a quarter of p
 draw no tint at all.
 -->
 
-A node's own props and its type's renderer win over drawn defaults, so every prop you set takes a choice away from the presentations. Write the structure, and set only the props that carry meaning, such as a colour that shows which element is current; unset, drawn props vary more widely than a pick between a few values would. Draw meaningful colours in the design block from the palette, so which colour shows "current" varies while staying consistent within a presentation. Use design picks for choices the library does not draw, such as a collection's `layout` or which annotation nodes to show. How a domain type appears is such a choice too: the same type can map to quite different views, and a type's renderer or the view can draw between them, so presentations differ in what they show as well as how it looks. Set `defaults` to `'fixed'` only when the participant asks for a consistent or plainer look; liking one presentation is not such a request.
+A node's own props and its type's renderer win over drawn defaults, so every prop you set takes a choice away from the presentations. Write the structure, and set only the props that carry meaning, such as a colour that shows which element is current; unset, drawn props vary more widely than a pick between a few values would. Draw meaningful colours in the design block from the palette, so which colour shows "current" varies while staying consistent within a presentation. Use design picks for choices the library does not draw, such as a collection's `layout` or which annotation nodes to show. How a domain type appears is such a choice too: the same type can map to quite different views, and a type's renderer or the view can draw between them, so presentations differ in what they show as well as how it looks. When the participant asks for a consistent or plainer look, set the props that should stay the same; liking one presentation is not such a request.
 
 Example, with domain, input, algorithm, design, and a script-free view:
 

@@ -1,50 +1,6 @@
-/** Shape presets and the named scales that turn Node prop values into CSS. */
+/** The named scales that turn Node prop values into CSS. */
 
-import type {
-  FrameRatio,
-  MinSize,
-  NodeColor,
-  NodeShape,
-  NodeSize,
-  Radius,
-  Spacing,
-  StrokeWidth,
-  Weight
-} from './props';
-
-/** The defaults a shape gives a node; its own props, and drawn defaults, override them. */
-export type Preset = {
-  padding?: Spacing;
-  radius?: Radius;
-  strokeWidth?: StrokeWidth;
-  minSize?: MinSize;
-  fill?: NodeColor;
-  stroke?: NodeColor;
-  weight?: Weight;
-  /** Text size relative to the enclosing node, in em. */
-  scale?: number;
-};
-
-export const presets: Record<NodeShape, Preset> = {
-  box: {
-    padding: 'small',
-    radius: 'medium',
-    strokeWidth: 'thin',
-    minSize: 'medium',
-    fill: 'neutral',
-    stroke: 'neutral',
-    weight: 'bold',
-    scale: 1.25
-  },
-  card: {
-    padding: 'medium',
-    radius: 'medium',
-    strokeWidth: 'thin',
-    fill: 'neutral',
-    stroke: 'neutral'
-  },
-  plain: { padding: 'none', radius: 'small', strokeWidth: 'none' }
-};
+import type { FrameRatio, NodeSize } from './props';
 
 export const spacings = { none: '0', small: '0.4em', medium: '0.75em', large: '1.25em' };
 export const radii = { none: '0', small: '0.25rem', medium: 'var(--sv-radius)', full: '9999px' };

@@ -1,8 +1,8 @@
 <!--
   One node of a visualization: a primitive `value`, children content, or, with `items`, a
   collection. A layout arranges a collection's items, and arranges children too when one is set,
-  so annotations such as an index or a pointer are simply nodes beside a value. A shape is only a
-  preset of defaults; every visual property is also a prop of its own.
+  so annotations such as an index or a pointer are simply nodes beside a value. A shape only picks
+  which of the presentation's drawn looks a node takes; every visual property is also a prop of its own.
 -->
 <script lang="ts" generics="T">
   import { untrack, type Snippet } from 'svelte';
@@ -26,11 +26,10 @@
     measure,
     minSizes,
     namedSizes,
-    presets,
     radii,
     spacings,
     strokeWidths
-  } from './presets';
+  } from './scales';
   import type {
     Align,
     Justify,
@@ -44,6 +43,7 @@
     NodeStroke,
     Primitive,
     Radius,
+    ShapeDefaults,
     Spacing,
     StrokeWidth,
     Weight
@@ -98,7 +98,7 @@
     item?: Snippet<[T, number, string | undefined]>;
     /** An atomic type name, such as 'Int'; its renderer snippet, if the view defines one, draws the value. */
     type?: string;
-    /** A preset: 'box' for a value, 'plain' for content and collections, unless given. */
+    /** Which drawn look: 'box' for a value, 'plain' for content and collections, unless given. */
     shape?: NodeShape;
     /** Background colour: a palette name such as 'amber' (a light shade), or any CSS colour. */
     fill?: NodeColor;
@@ -159,7 +159,7 @@
   } = $props();
 
   const types = typeContext();
-  // The presentation's drawn defaults sit between this node's own props and its shape's preset.
+  // The presentation's drawn defaults fill in whatever this node's own props leave unset.
   const drawn = defaultsContext();
   // The id a participant's selection refers to this node by (see provideNodeIds).
   const nodeIds = nodeIdsContext();
@@ -206,13 +206,14 @@
 
   const collection = $derived(items !== undefined);
   const resolvedShape = $derived(
-    shape ?? (collection ? (drawn?.collection.shape ?? 'plain') : children ? 'plain' : 'box')
+    shape ?? (collection ? drawn.collection.shape : children ? 'plain' : 'box')
   );
   // Links need positions to join, so a node with links and no layout is laid out freely.
   const arrangement = $derived(layout ?? (collection ? 'row' : __links ? 'free' : undefined));
-  const preset = $derived.by(() => {
-    const seeded = resolvedShape === 'plain' ? undefined : drawn?.[resolvedShape];
-    const base = { ...presets[resolvedShape], ...seeded };
+  // A plain node has no drawn look: no border, padding, or fill unless its props give them.
+  const look = $derived.by((): Partial<ShapeDefaults> => {
+    if (resolvedShape === 'plain') return {};
+    const base = drawn[resolvedShape];
     // A framed group keeps the frame but not a cell's text size, weight, or minimum size.
     return arrangement
       ? { ...base, scale: undefined, weight: undefined, minSize: undefined }
@@ -223,21 +224,19 @@
       ? `${Math.min(Math.max(size, 0.5), 4)}rem`
       : size !== undefined
         ? `${namedSizes[size as NodeSize] ?? 1}rem`
-        : preset.scale
-          ? `${preset.scale}em`
+        : look.scale
+          ? `${look.scale}em`
           : undefined
   );
-  const resolvedWeight = $derived(weight ?? preset.weight);
+  const resolvedWeight = $derived(weight ?? look.weight);
   // stroke="none" or false turns the stroke off whatever its width; otherwise the width
-  // comes from the prop, the drawn defaults, or the preset, in that order.
+  // comes from the prop, then the drawn defaults.
   const strokeOff = $derived(stroke === 'none' || stroke === false);
   const strokeColour = $derived(
-    strokeOff
-      ? undefined
-      : paletteColor((stroke as NodeColor | undefined) ?? preset.stroke, 'stroke')
+    strokeOff ? undefined : paletteColor((stroke as NodeColor | undefined) ?? look.stroke, 'stroke')
   );
   const resolvedStrokeWidth = $derived.by(() => {
-    const width = strokeOff ? 'none' : (strokeWidth ?? preset.strokeWidth ?? 'none');
+    const width = strokeOff ? 'none' : (strokeWidth ?? look.strokeWidth ?? 'none');
     return typeof width === 'number'
       ? Number.isFinite(width)
         ? `${Math.min(Math.max(width, 0), 20)}px`
@@ -248,8 +247,7 @@
     columns ?? Math.max(1, Math.ceil(Math.sqrt(items?.length ?? (arrangement === 'grid' ? 4 : 1))))
   );
   const resolvedAlign = $derived(
-    align ??
-      (arrangement === 'column' ? (drawn?.align.column ?? 'center') : (drawn?.align.row ?? 'start'))
+    align ?? (arrangement === 'column' ? drawn.align.column : drawn.align.row)
   );
   const alignment = $derived(alignments[resolvedAlign]);
   const justification = $derived(justifications[justify ?? 'start']);
@@ -302,13 +300,13 @@
         ? 700
         : 400}
     style:color={paletteColor(color, 'text')}
-    style:background-color={paletteColor(fill ?? preset.fill, 'fill')}
+    style:background-color={paletteColor(fill ?? look.fill, 'fill')}
     style:border-color={strokeColour}
     style:border-width={resolvedStrokeWidth}
-    style:border-radius={radii[radius ?? preset.radius ?? 'none']}
-    style:padding={measure(spacings, padding ?? preset.padding)}
-    style:min-width={least(measure(minSizes, minSize ?? preset.minSize), reserved?.width)}
-    style:min-height={least(measure(minSizes, minSize ?? preset.minSize), reserved?.height)}
+    style:border-radius={radii[radius ?? look.radius ?? 'none']}
+    style:padding={measure(spacings, padding ?? look.padding)}
+    style:min-width={least(measure(minSizes, minSize ?? look.minSize), reserved?.width)}
+    style:min-height={least(measure(minSizes, minSize ?? look.minSize), reserved?.height)}
     style:opacity={typeof opacity === 'number' && Number.isFinite(opacity)
       ? Math.min(Math.max(opacity, 0), 1)
       : undefined}
@@ -322,7 +320,7 @@
         {form}
         {curve}
         {layoutSeed}
-        gap={gap ?? drawn?.gap ?? 'medium'}
+        gap={gap ?? drawn.gap}
         scope={id ?? 'node'}
       >
         {@render contents()}
@@ -332,7 +330,7 @@
         class="items {arrangement}"
         class:uniform={collection}
         style:--sv-columns={gridColumns}
-        style:gap={measure(spacings, gap ?? drawn?.gap ?? 'medium')}
+        style:gap={measure(spacings, gap ?? drawn.gap)}
         style:align-items={collection && arrangement === 'column' ? 'center' : alignment}
         style:justify-items={collection
           ? arrangement === 'column'

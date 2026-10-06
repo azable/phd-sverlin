@@ -353,18 +353,15 @@ describe('single-component Svelte compilation', () => {
     ).rejects.toThrow('"Node" names a library component');
   });
 
-  it('records drawn defaults with the design values, unless the design fixes them', async () => {
+  it('records drawn defaults with the design values, which cannot opt out of them', async () => {
     const source = '<script lang="sverlin">yield "A";</script><Node value={1} />';
     const drawn = await compileSvelteComponent(source, 3);
     expect(drawn.parameters.__defaults).toEqual(drawWith((key) => keyedRandom(3, key)));
-    const fixed = await compileSvelteComponent(
-      `${source}<script lang="sverlin" design>const defaults = 'fixed';</script>`,
-      3
-    );
-    expect(fixed.parameters).toEqual({ defaults: 'fixed' });
     await expect(
-      compileSvelteComponent(`${source}<script lang="sverlin" design>const defaults = 1;</script>`)
-    ).rejects.toThrow('defaults must be "fixed" or "drawn"');
+      compileSvelteComponent(
+        `${source}<script lang="sverlin" design>const defaults = 'fixed';</script>`
+      )
+    ).rejects.toThrow('The design value defaults is no longer supported');
   });
 
   it('resolves the page frame from the design value frame', async () => {

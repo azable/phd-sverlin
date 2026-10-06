@@ -5,7 +5,14 @@
 // 'sverlin:types' context.
 
 import { mount, unmount, type Component } from 'svelte';
-import { Frame, settleSpans, themeCss, type FrameSettings, type LayoutMemory } from 'sverlin';
+import {
+  Frame,
+  settleSpans,
+  themeCss,
+  type FrameSettings,
+  type LayoutMemory,
+  type NodeDefaults
+} from 'sverlin';
 import Main from 'virtual:component';
 import atoms from 'virtual:atoms';
 import states from 'virtual:trace';
@@ -19,7 +26,7 @@ document.head.append(theme);
 
 type StepState = Record<string, unknown> & {
   __types?: Record<string, string>;
-  __defaults?: { font?: string } & Record<string, unknown>;
+  __defaults: NodeDefaults;
   __frame: FrameSettings;
 };
 
@@ -37,8 +44,8 @@ const fonts: Record<string, string> = {
   serif: "ui-serif, Georgia, 'Times New Roman', serif",
   mono: "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
 };
-const font = (states[0] as StepState).__defaults?.font;
-if (font && fonts[font]) document.documentElement.style.fontFamily = fonts[font];
+const font = (states[0] as StepState).__defaults.font;
+if (fonts[font]) document.documentElement.style.fontFamily = fonts[font];
 
 /** A type's unit, or that of the nearest type it refines. */
 function unitOf(typeName: string): string | undefined {

@@ -25,7 +25,7 @@
     justifications,
     measure,
     spacings
-  } from './node/presets';
+  } from './node/scales';
   import type { FrameSettings } from './node/props';
 
   let {
@@ -53,9 +53,7 @@
 
   // The top-level nodes form a column or row by CSS, or are placed by constraint layout when the
   // arrangement is free, the design relates them, or <Link> components join them.
-  const rootLayout = $derived(
-    settings.layout ?? (settings.linked ? 'free' : (drawn?.frame.layout ?? 'column'))
-  );
+  const rootLayout = $derived(settings.layout ?? (settings.linked ? 'free' : drawn.frame.layout));
   const rootSolved = $derived<Template | undefined>(
     rootLayout === 'free' || settings.constraints?.length || settings.linked
       ? rootLayout
@@ -518,8 +516,8 @@
     style:height="{height}px"
     style:transform="translate(-50%, -50%) translate({panX}px, {panY}px) scale({shown})"
     style:padding={measure(spacings, settings.padding)}
-    style:justify-content={justifications[settings.justify ?? drawn?.frame.justify ?? 'start']}
-    style:align-items={alignments[settings.align ?? drawn?.frame.align ?? 'center']}
+    style:justify-content={justifications[settings.justify ?? drawn.frame.justify]}
+    style:align-items={alignments[settings.align ?? drawn.frame.align]}
   >
     <div
       class="sv-root"
@@ -531,9 +529,9 @@
         {#if rootSolved}
           <Arranged
             template={rootSolved}
-            align={settings.align ?? drawn?.frame.align ?? 'center'}
+            align={settings.align ?? drawn.frame.align}
             constraints={settings.constraints}
-            gap={drawn?.gap ?? 'medium'}
+            gap={drawn.gap}
             scope="frame"
             layoutSeed={settings.layoutSeed}
           >
@@ -544,11 +542,9 @@
           <div
             class="sv-flow"
             style:flex-direction={rootLayout === 'row' ? 'row' : 'column'}
-            style:gap={measure(spacings, drawn?.gap ?? 'medium')}
-            style:justify-content={justifications[
-              settings.justify ?? drawn?.frame.justify ?? 'start'
-            ]}
-            style:align-items={alignments[settings.align ?? drawn?.frame.align ?? 'center']}
+            style:gap={measure(spacings, drawn.gap)}
+            style:justify-content={justifications[settings.justify ?? drawn.frame.justify]}
+            style:align-items={alignments[settings.align ?? drawn.frame.align]}
             style:min-width={flowLeast
               ? `${flowLeast.width}px`
               : `calc(${width}px - 2 * ${measure(spacings, settings.padding)})`}

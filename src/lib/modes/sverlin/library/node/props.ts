@@ -15,7 +15,6 @@ export type Justify = 'start' | 'center' | 'end' | 'between' | 'around' | 'evenl
 /** The page frame's aspect ratio; it lays out at a fixed logical size and scales to fit the page. */
 export type FrameRatio = '16:9' | '4:3' | '3:2' | '1:1' | '3:4' | '9:16';
 
-/** A preset of frame, spacing, and text defaults that a node's own props override. */
 /** How the page frame is shaped and arranges the view's top-level nodes (resolved from the design value `frame`). */
 export type FrameSettings = {
   ratio: FrameRatio;
@@ -37,7 +36,7 @@ export type FrameSettings = {
 /** The arrangements the page frame offers its top-level nodes. */
 export type FrameLayout = 'column' | 'row' | 'free';
 
-/** A preset of frame, spacing, and text defaults that a node's own props override. */
+/** Which of the presentation's drawn looks a node takes: a cell, a card, or none. */
 export type NodeShape = 'box' | 'card' | 'plain';
 
 /** A theme palette colour, giving a light shade as a fill and a strong shade as a stroke or text. */

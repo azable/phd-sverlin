@@ -44,9 +44,9 @@ export function markRendering(name: string): void {
   setContext('sverlin:rendering', new Set([...(rendering ?? []), name]));
 }
 
-/** The defaults this presentation drew (see node/defaults.ts), if any. */
-export function defaultsContext(): NodeDefaults | undefined {
-  return getContext<NodeDefaults | undefined>('sverlin:defaults');
+/** The defaults this presentation drew (see node/defaults.ts). */
+export function defaultsContext(): NodeDefaults {
+  return getContext<NodeDefaults>('sverlin:defaults');
 }
 
 /** Hands out the ids rendered nodes carry for selection; see provideNodeIds. */
