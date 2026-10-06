@@ -171,6 +171,10 @@ function show(step: number) {
     shown.layer.classList.remove('pending');
     if (current) remove(current);
     current = shown;
+    // The first step shown means the page is ready, so the app can take its loader away.
+    if (!ready && window.parent !== window)
+      window.parent.postMessage({ type: 'sverlin:ready' }, '*');
+    ready = true;
     pending = undefined;
   });
 }
@@ -214,6 +218,7 @@ async function recordSteps() {
   }
 }
 
+let ready = false;
 let requested = clampStep(playback.__sverlinStep ?? 0);
 let recorded = false;
 

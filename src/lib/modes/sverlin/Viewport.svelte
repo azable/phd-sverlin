@@ -1,5 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import { Spinner } from '$lib/client/components/ui/spinner';
   import * as v from 'valibot';
 
   import { sandboxDocument, type CanvasView } from '../sandbox';
@@ -46,9 +48,12 @@
   });
   // Whether the page has loaded and listens for steps; a new document starts unloaded.
   let loaded = $state(false);
+  // Whether the page shows its first step: it lays every step out before showing any.
+  let ready = $state(false);
   $effect(() => {
     void document;
     loaded = false;
+    ready = false;
   });
 
   $effect(() => {
@@ -85,12 +90,22 @@
       const data = event.data as { type?: unknown } & Partial<Record<keyof CanvasView, unknown>>;
       if (data?.type === 'sverlin:loaded') {
         loaded = true;
+        // Presentations built before pages reported readiness never say so; stop waiting for them.
+        const waiting = document;
+        setTimeout(() => {
+          if (document === waiting) ready = true;
+        }, 4000);
+        return;
+      }
+      if (data?.type === 'sverlin:ready') {
+        ready = true;
         return;
       }
       if (data?.type === 'sverlin:error') {
         const parsed = v.safeParse(errorMessage, data);
         if (parsed.success) {
           failure = parsed.output;
+          ready = true;
           onRuntimeError({
             message: parsed.output.message,
             ...(parsed.output.step === undefined ? {} : { step: parsed.output.step })
@@ -127,6 +142,17 @@
     referrerpolicy="no-referrer"
     class="block h-full w-full border-0 bg-white"
   ></iframe>
+  {#if !ready}
+    <div
+      class="absolute inset-0 flex items-center justify-center gap-2 bg-white text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+      out:fade={{ duration: 150 }}
+    >
+      <Spinner />
+      <span>Loading…</span>
+    </div>
+  {/if}
   {#if failure}
     <p
       role="alert"
