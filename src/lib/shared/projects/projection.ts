@@ -63,6 +63,7 @@ const stateTransitions = {
         : { displaySetId: event.payload.displaySetId, presentations: [event] };
   },
   'visualization.preference-recorded': null,
+  'visualization.runtime-failed': null,
   'assistant.responded': null,
   'system.notified': null
 } satisfies StateTransitions;

@@ -2,22 +2,32 @@ import { describe, expect, it } from 'vitest';
 
 import {
   algorithmLimits,
-  interpretAlgorithm,
+  interpretAlgorithm as interpretTyped,
   interpretDesign,
-  interpretInput
+  interpretDomain,
+  interpretInput as interpretTypedInput,
+  type TypedState
 } from './interpret.server';
+
+// Input and algorithm values all have domain types; these tests share a small domain.
+const atoms = interpretDomain(
+  "const Int = type('integer'); const Real = type('number'); const Flag = type('boolean'); const Text = type('text');"
+);
+const interpretAlgorithm = (body: string, input?: TypedState) => interpretTyped(body, input, atoms);
+const interpretInput = (body: string) => interpretTypedInput(body, atoms);
+const plain = <T extends { types: unknown }>(step: T) => ({ ...step, types: undefined });
 
 describe('algorithm interpretation', () => {
   it('records every top-level binding at each yield', () => {
     const trace = interpretAlgorithm(`
-      const values = [3, 8, 5];
-      let i = -1;
-      let found = false;
+      const values = [Int(3), Int(8), Int(5)];
+      let i = Int(-1);
+      let found = Flag(false);
       yield 'Start';
-      for (i = 0; i < values.length; i++) {
+      for (i = Int(0); i < values.length; i++) {
         yield \`Compare \${values[i]}\`;
         if (values[i] === 8) {
-          found = true;
+          found = Flag(true);
           yield 'Found';
           break;
         }
@@ -30,7 +40,7 @@ describe('algorithm interpretation', () => {
 
   it('snapshots state so later mutations do not change earlier steps', () => {
     const trace = interpretAlgorithm(`
-      const a = [2, 1];
+      const a = [Int(2), Int(1)];
       yield 'Before';
       const t = a[0]; a[0] = a[1]; a[1] = t;
       yield 'After';
@@ -43,24 +53,24 @@ describe('algorithm interpretation', () => {
   it('supports loops, objects, array methods, Math, and early return', () => {
     const trace = interpretAlgorithm(`
       const stack = [];
-      const point = { x: 1, y: 2 };
-      let total = 0;
-      for (const n of [4, 9, 16]) { stack.push(Math.sqrt(n)); total += n; }
-      let k = 0;
+      const point = { x: Int(1), y: Int(2) };
+      let total = Int(0);
+      for (const n of [Int(4), Int(9), Int(16)]) { stack.push(Real(Math.sqrt(n))); total += n; }
+      let k = Int(0);
       while (true) { k++; if (k > 2) break; else continue; }
       point.x += stack.indexOf(3);
-      let i = 0;
-      const a = [0, 0];
+      let i = Int(0);
+      const a = [Int(0), Int(0)];
       a[i++] += 5;
       yield stack.join('-');
       return;
       yield 'Unreachable';
     `);
-    expect(trace).toEqual([
+    expect(trace.map(plain)).toEqual([
       {
         label: '2-3-4',
         state: { stack: [2, 3, 4], point: { x: 2, y: 2 }, total: 29, k: 3, i: 1, a: [5, 0] },
-        types: {}
+        types: undefined
       }
     ]);
   });
@@ -71,12 +81,12 @@ describe('algorithm interpretation', () => {
     ['global access', 'const w = globalThis; yield "A";', /"globalThis" is not defined/],
     ['constructor escapes', 'const a = []; const c = a.constructor; yield "A";', /not allowed/],
     ['prototype keys', 'const o = {}; o["__proto__"] = 1; yield "A";', /not allowed/],
-    ['host methods', 'const s = "x"; yield s.repeat(3);', /only available on arrays/],
+    ['host methods', 'const s = Text("x"); yield s.repeat(3);', /only available on arrays/],
     ['new', 'const d = new Date(); yield "A";', /New Expression/],
     ['loose equality', 'yield 1 == 1 ? "A" : "B";', /Use ===/],
-    ['reserved names', 'let step = 0; yield "A";', /reserved/],
-    ['undeclared assignment', 'x = 1; yield "A";', /must be declared/],
-    ['no steps', 'let x = 1;', /at least one step/],
+    ['reserved names', 'let step = Int(0); yield "A";', /reserved/],
+    ['undeclared assignment', 'x = Int(1); yield "A";', /must be declared/],
+    ['no steps', 'let x = Int(1);', /at least one step/],
     ['non-string labels', 'yield 3;', /non-empty strings/],
     ['nested yield', 'const a = [yield "A"];', /statement of its own/],
     ['object arithmetic', 'const o = {}; yield "A" + (o - 1);', /Expected a number/]
@@ -87,23 +97,25 @@ describe('algorithm interpretation', () => {
   it('stops endless loops and oversized state', () => {
     expect(() => interpretAlgorithm('while (true) {} yield "A";')).toThrow(/operations/);
     expect(() =>
-      interpretAlgorithm('let s = "ab"; while (true) { s = s + s; } yield "A";')
+      interpretAlgorithm('let s = Text("ab"); while (true) { s = s + s; } yield "A";')
     ).toThrow(/characters/);
     expect(() =>
-      interpretAlgorithm('let a = [1]; while (true) { a = [...a, ...a]; } yield "A";')
+      interpretAlgorithm('let a = [Int(1)]; while (true) { a = [...a, ...a]; } yield "A";')
     ).toThrow(/entries/);
     expect(() =>
-      interpretAlgorithm('let a = [1, 2]; for (let i = 0; i < 40; i++) { a = [a, a]; } yield "A";')
+      interpretAlgorithm(
+        'let a = [Int(1), Int(2)]; for (let i = Int(0); i < 40; i++) { a = [a, a]; } yield "A";'
+      )
     ).toThrow(/too large/);
     expect(() =>
       interpretAlgorithm(
-        `for (let i = 0; i <= ${algorithmLimits.maximumSteps}; i++) yield \`S\${i}\`;`
+        `for (let i = Int(0); i <= ${algorithmLimits.maximumSteps}; i++) yield \`S\${i}\`;`
       )
     ).toThrow(/more than/);
   });
 
   it('reports offsets into the algorithm body', () => {
-    const body = 'let x = 1;\nyield "A";\nx = y;';
+    const body = 'let x = Int(1);\nyield "A";\nx = y;';
     expect(() => interpretAlgorithm(body)).toThrow(
       expect.objectContaining({ offset: body.indexOf('y;') })
     );
@@ -115,9 +127,9 @@ describe('algorithm interpretation', () => {
 
 describe('input, design, and step selection', () => {
   it('starts the algorithm from the input and records input variables', () => {
-    const input = interpretInput('const values = [2, 1]; const label = "pair";');
+    const input = interpretInput('const values = [Int(2), Int(1)]; const label = Text("pair");');
     const trace = interpretAlgorithm(
-      'yield "Start"; values.reverse(); let swapped = true; yield "Swapped";',
+      'yield "Start"; values.reverse(); let swapped = Flag(true); yield "Swapped";',
       input
     );
     expect(trace.map(({ state }) => state)).toEqual([
@@ -128,7 +140,7 @@ describe('input, design, and step selection', () => {
     expect(() => interpretAlgorithm('let values = []; yield "A";', input)).toThrow(
       /already declared here or in the input/
     );
-    expect(() => interpretInput('const x = 1; yield "A";')).toThrow(/algorithm block/);
+    expect(() => interpretInput('const x = Int(1); yield "A";')).toThrow(/algorithm block/);
   });
 
   it('draws design values deterministically from the seed', () => {
@@ -198,8 +210,52 @@ describe('input, design, and step selection', () => {
   });
 
   it('requires unique step labels', () => {
-    expect(() => interpretAlgorithm('for (let i = 0; i < 2; i++) yield "Compare";')).toThrow(
+    expect(() => interpretAlgorithm('for (let i = Int(0); i < 2; i++) yield "Compare";')).toThrow(
       /must be unique.*Compare/
     );
+  });
+});
+
+describe('domain types', () => {
+  it('rejects plain values in the input, naming where they are and how to type them', () => {
+    expect(() => interpretInput('const values = [Int(3), 8];')).toThrow(
+      'values[1] would be the plain number 8, but input and algorithm values must have a domain type. Write it as Int(8) or Real(8)'
+    );
+    expect(() => interpretInput('const point = { x: Int(1), label: "a" };')).toThrow(
+      /point\.label would be the plain string "a".*Text\("a"\)/
+    );
+    expect(() => interpretTypedInput('const n = 3;')).toThrow(
+      "Declare a type that says what it means in the domain block, such as const Count = type('integer');, and write Count(3)."
+    );
+    // Nothing yet is null, and containers of typed values are fine.
+    expect(
+      interpretInput('const empty = []; const none = null; const grid = [[Int(1)]];').state
+    ).toEqual({ empty: [], none: null, grid: [[1]] });
+  });
+
+  it('rejects plain values the algorithm stores, at the statement that stores them', () => {
+    const body = 'let found = Flag(false);\nyield "A";\nfound = 1 < 2;';
+    expect(() => interpretAlgorithm(body)).toThrow(
+      expect.objectContaining({
+        offset: body.indexOf('1 < 2'),
+        message: expect.stringMatching(/^found would be the plain boolean true.*Flag\(a < b\)/u)
+      })
+    );
+    expect(() => interpretAlgorithm('let i = 0; yield "A";')).toThrow(
+      /i would be the plain number 0/
+    );
+    expect(() =>
+      interpretAlgorithm('const d = [Int(0)]; let j = Int(0); d[j] = d.length; yield "A";')
+    ).toThrow(/d\[j\] would be the plain number 1/);
+    expect(() => interpretAlgorithm('const s = []; s.push("x"); yield "A";')).toThrow(
+      /an item added by s\.push\(\) would be the plain string "x"/
+    );
+    expect(() => interpretAlgorithm('let h = Int(7); h = h / Int(2); yield "A";')).toThrow(
+      /h would be the plain number 3\.5/
+    );
+    // Plain literals in expressions are fine when the result keeps its type.
+    expect(
+      interpretAlgorithm('let i = Int(0); i = i + 1; i += 2; i++; yield "A";')[0].types
+    ).toEqual({ i: 'Int' });
   });
 });

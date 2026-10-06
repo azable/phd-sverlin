@@ -33,6 +33,7 @@ import {
   type ProjectArtifact
 } from './events/values';
 import { messageContentSchema } from './events/message-content';
+import { runtimeFailureSchema } from './events/visualization-runtime-failed';
 import { projectTemplateIdSchema, type ProjectCreation } from './creation';
 
 /** Current project document and transport format version. */
@@ -77,6 +78,11 @@ export const projectCommandSchema = v.variant('type', [
     ...commandBase,
     type: v.literal('advance-presentations'),
     presentations: v.pipe(v.array(presentationIdSchema), v.minLength(1), v.maxLength(2))
+  }),
+  v.strictObject({
+    ...commandBase,
+    type: v.literal('report-runtime-error'),
+    ...runtimeFailureSchema.entries
   }),
   v.strictObject({ ...commandBase, type: v.literal('rebuild'), seed: positiveSchema }),
   v.strictObject({

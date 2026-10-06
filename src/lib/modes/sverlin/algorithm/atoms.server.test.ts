@@ -58,7 +58,7 @@ describe('atomic type definitions', () => {
 describe('typed values', () => {
   it('records the type of every typed value by path, carried from the input', () => {
     const input = interpretInput(
-      'const values = [Int(3), Int(8)]; const person = { height: Height(170) }; const plain = 4;',
+      'const values = [Int(3), Int(8)]; const person = { height: Height(170) };',
       domain
     );
     expect(input.types).toEqual({
@@ -86,8 +86,8 @@ describe('typed values', () => {
   it('carries types through arithmetic and adopts the more specific type', () => {
     const step = last(`
       const a = Int(7) + Int(2);
-      const b = Int(7) / Int(2);
-      const c = Int(7) + 0.5;
+      const b = Real(Int(7) / Int(2));
+      const c = Real(Int(7) + 0.5);
       const d = Height(150) + Int(5);
       const e = Height(150) * 2;
       let f = Int(1);
@@ -96,9 +96,11 @@ describe('typed values', () => {
       yield 'Done';
     `);
     expect(step.state).toMatchObject({ a: 9, b: 3.5, c: 7.5, d: 155, e: 300, f: 2, g: -5 });
-    // b and c are no longer whole, so they leave the integer type and stay untyped.
+    // b and c are no longer whole, so they leave the integer type, and are kept as Real.
     expect(step.types).toEqual({
       a: 'Int',
+      b: 'Real',
+      c: 'Real',
       d: 'Height',
       e: 'Height',
       f: 'Int',
@@ -121,15 +123,15 @@ describe('typed values', () => {
     const step = last(`
       const values = [Int(3), Int(8), Int(5)];
       const target = Int(8);
-      const equal = values[1] === target;
-      const plainEqual = values[1] === 8;
-      const position = values.indexOf(target);
-      const present = values.includes(Int(5));
-      const falsy = Bool(false) ? 'yes' : 'no';
-      let count = 0;
+      const equal = Bool(values[1] === target);
+      const plainEqual = Bool(values[1] === 8);
+      const position = Int(values.indexOf(target));
+      const present = Bool(values.includes(Int(5)));
+      const falsy = Text(Bool(false) ? 'yes' : 'no');
+      let count = Int(0);
       if (Bool(true)) count += 1;
       const name = Text('ab') + 'c';
-      const length = Text('abc').length;
+      const length = Int(Text('abc').length);
       yield \`Found \${target} at \${position}\`;
     `);
     expect(step.label).toBe('Found 8 at 1');

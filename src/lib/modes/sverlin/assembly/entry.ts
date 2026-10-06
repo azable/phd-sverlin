@@ -47,7 +47,8 @@ function unitOf(typeName: string): string | undefined {
   return undefined;
 }
 
-type Shown = { step: number; layer: HTMLElement; app: Record<string, unknown> };
+// The mounted app, unless the view failed to mount, in which case the layer holds a notice instead.
+type Shown = { step: number; layer: HTMLElement; app?: Record<string, unknown> };
 const root = document.getElementById('app') ?? document.body;
 let current: Shown | undefined;
 let pending: Shown | undefined;
@@ -81,7 +82,7 @@ function mountStep(step: number, phase: Phase, settled: (shown: Shown) => void):
   const layer = document.createElement('div');
   layer.className = 'sv-layer pending';
   root.append(layer);
-  const shown: Shown = { step, layer, app: {} };
+  const shown: Shown = { step, layer };
   const memory: LayoutMemory = {
     step,
     recording: phase === 'recording',
@@ -90,38 +91,72 @@ function mountStep(step: number, phase: Phase, settled: (shown: Shown) => void):
     fits,
     reserved
   };
-  shown.app = mount(Frame, {
-    target: layer,
-    props: {
-      view: Main as Component<Record<string, unknown>>,
-      props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
-      settings: frame,
-      onsettled: () => settled(shown)
-    },
-    context: new Map<string, unknown>([
-      ['sverlin:defaults', defaults],
-      ['sverlin:layout-memory', memory],
-      [
-        'sverlin:types',
-        {
-          itemType: (container: unknown, index: number) => {
-            const path =
-              container !== null && typeof container === 'object'
-                ? paths.get(container)
-                : undefined;
-            return path === undefined ? undefined : types[`${path}[${index}]`];
-          },
-          parent: (typeName: string) => atoms[typeName]?.parent,
-          unit: unitOf
-        }
-      ]
-    ])
-  });
+  try {
+    shown.app = mount(Frame, {
+      target: layer,
+      props: {
+        view: Main as Component<Record<string, unknown>>,
+        props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
+        settings: frame,
+        onsettled: () => settled(shown)
+      },
+      context: new Map<string, unknown>([
+        ['sverlin:defaults', defaults],
+        ['sverlin:layout-memory', memory],
+        [
+          'sverlin:types',
+          {
+            itemType: (container: unknown, index: number) => {
+              const path =
+                container !== null && typeof container === 'object'
+                  ? paths.get(container)
+                  : undefined;
+              return path === undefined ? undefined : types[`${path}[${index}]`];
+            },
+            parent: (typeName: string) => atoms[typeName]?.parent,
+            unit: unitOf
+          }
+        ]
+      ])
+    });
+  } catch (cause) {
+    // A view that fails at a step shows why there, and the other steps still load.
+    reportError(cause, step);
+    const notice = document.createElement('p');
+    notice.className = 'sv-error';
+    notice.textContent = `Step ${step + 1} could not be drawn: ${errorText(cause)}`;
+    layer.append(notice);
+    queueMicrotask(() => settled(shown));
+  }
   return shown;
 }
 
+function errorText(cause: unknown): string {
+  return (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
+}
+
+/** Tell the app the view failed, once per step and message, so it can say so. */
+const reported = new Set<string>();
+function reportError(cause: unknown, step?: number) {
+  const message = errorText(cause);
+  const key = `${step ?? ''} ${message}`;
+  if (reported.has(key) || window.parent === window) return;
+  reported.add(key);
+  window.parent.postMessage(
+    { type: 'sverlin:error', message, ...(step === undefined ? {} : { step }) },
+    '*'
+  );
+}
+addEventListener('error', (event) => {
+  // Layout settling over more than one frame makes the browser warn about resize observers; it
+  // is not a failure of the view.
+  if (/^ResizeObserver loop/u.test(event.message)) return;
+  reportError(event.error ?? event.message);
+});
+addEventListener('unhandledrejection', (event) => reportError(event.reason));
+
 function remove(shown: Shown) {
-  unmount(shown.app);
+  if (shown.app) unmount(shown.app);
   shown.layer.remove();
 }
 

@@ -197,6 +197,7 @@ const timelineCases = {
     `Presented ${event.payload.presentation.format} visualization ${event.payload.presentation.presentationId} in display set ${event.payload.displaySetId}.`,
   'visualization.preference-recorded': (event) =>
     `Preferred presentation ${event.payload.preferred} over ${event.payload.presentations.find((id) => id !== event.payload.preferred) ?? 'the alternative'} at step ${event.payload.step}.`,
+  'visualization.runtime-failed': (event) => runtimeFailureText(event),
   'assistant.responded': () => 'Assistant responded to the user.',
   'system.notified': (event) => `System ${event.payload.severity}: ${event.payload.message}`
 } satisfies ProjectEventCases<string>;
@@ -220,6 +221,13 @@ const conversationCases = {
   'build.failed': () => [],
   'artifact.version-created': () => [],
   'visualization.presented': () => [],
+  // Reported by the participant's browser, not written by them; the next revision should fix it.
+  'visualization.runtime-failed': (event) => [
+    {
+      role: 'user',
+      content: `[Reported automatically by the participant’s browser, not written by the participant] ${runtimeFailureText(event)} Fix the view so that every step draws.`
+    } as const
+  ],
   'visualization.preference-recorded': (event) => [
     {
       role: 'user',
@@ -411,6 +419,11 @@ function projectWorkspace(snapshot: ProjectSnapshot): AiWorkspace {
       sha256: artifact.content.sha256
     }))
   };
+}
+
+function runtimeFailureText(event: ProjectEventOf<'visualization.runtime-failed'>): string {
+  const { presentationId, step, message } = event.payload;
+  return `Presentation ${presentationId} failed while drawing ${step === undefined ? 'a step' : `step ${step + 1}`}: ${message}`;
 }
 
 function feedbackMessage(event: ProjectEventOf<'feedback.submitted'>): string {

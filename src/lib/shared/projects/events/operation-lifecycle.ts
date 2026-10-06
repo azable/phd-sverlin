@@ -11,6 +11,7 @@ export const projectOperationKindSchema = v.picklist([
   'feedback',
   'assistant-turn',
   'advance-presentations',
+  'report-runtime-error',
   'rebuild',
   'resample',
   'presentation-refill',

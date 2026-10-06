@@ -55,23 +55,25 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function failure(seed: number, cause: unknown, durationMs: number): ModeBuildResult {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  // A source error can stand for several problems found together; each is its own diagnostic.
+  const problems = cause instanceof InvalidSvelteSourceError ? [cause, ...cause.others] : [cause];
+  const messages = problems.map((problem) =>
+    problem instanceof Error ? problem.message : String(problem)
+  );
   return {
     ok: false,
     seed,
     durationMs,
-    error: message,
-    diagnostics: [
-      {
-        severity: 'error',
-        message,
-        raw: message,
-        sourcePath: 'Main.svelte',
-        ...(cause instanceof InvalidSvelteSourceError
-          ? { code: cause.code, line: cause.line, column: cause.column }
-          : {})
-      }
-    ],
+    error: messages.join('\n'),
+    diagnostics: problems.map((problem, index) => ({
+      severity: 'error',
+      message: messages[index],
+      raw: messages[index],
+      sourcePath: 'Main.svelte',
+      ...(problem instanceof InvalidSvelteSourceError
+        ? { code: problem.code, line: problem.line, column: problem.column }
+        : {})
+    })),
     failureKind: cause instanceof InvalidSvelteSourceError ? 'source' : 'infrastructure'
   };
 }

@@ -186,6 +186,63 @@ describe('createProject', () => {
     expect(seed).toBeGreaterThan(0);
   });
 
+  it('records a view failure the browser reports once, for the assistant to read', async () => {
+    const { getProjectTemplate } = await import('./starter-catalog');
+    const { createProject, reportRuntimeFailure } = await import('./service');
+    const { projectConversationMessages } = await import('$lib/server/chat-bots/project-context');
+    const created = await createProject(
+      { creation: { templateId: getProjectTemplate('linear-search').id } },
+      serviceDependencies
+    );
+    const presented = created.events.find((event) => event.type === 'visualization.presented');
+    if (presented?.type !== 'visualization.presented') throw new Error('Expected a presentation.');
+    const presentationId = presented.payload.presentation.presentationId;
+    const failure = {
+      projectId: created.projectId,
+      presentationId,
+      step: 2,
+      message: "Cannot read properties of null (reading 'missing')"
+    };
+    const first = await reportRuntimeFailure(
+      { ...failure, expectedHead: projectHead(created).id, operationId: crypto.randomUUID() },
+      serviceDependencies
+    );
+    const recorded = first.document.events.filter(
+      (event) => event.type === 'visualization.runtime-failed'
+    );
+    expect(recorded).toMatchObject([
+      { actor: { kind: 'system' }, payload: { presentationId, step: 2, message: failure.message } }
+    ]);
+    // The same failure again adds nothing.
+    const again = await reportRuntimeFailure(
+      {
+        ...failure,
+        expectedHead: projectHead(first.document).id,
+        operationId: crypto.randomUUID()
+      },
+      serviceDependencies
+    );
+    expect(again.document.events).toHaveLength(first.document.events.length);
+    // The assistant reads it as an automatic report, not as the participant's words.
+    expect(projectConversationMessages(first.document.events).at(-1)).toEqual({
+      role: 'user',
+      content: expect.stringMatching(
+        /^\[Reported automatically by the participant’s browser, not written by the participant\] Presentation .* failed while drawing step 3: Cannot read properties of null/u
+      )
+    });
+    await expect(
+      reportRuntimeFailure(
+        {
+          ...failure,
+          presentationId: '00000000-0000-4000-8000-000000000000',
+          expectedHead: projectHead(first.document).id,
+          operationId: crypto.randomUUID()
+        },
+        serviceDependencies
+      )
+    ).rejects.toThrow('Only a presented visualization');
+  });
+
   it('adds the selected assistant introduction to blank projects without a model request', async () => {
     const { createProject } = await import('./service');
 

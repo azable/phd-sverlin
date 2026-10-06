@@ -33,6 +33,7 @@ import { ProjectConflictError, projectRepository, type ProjectRepository } from 
 import {
   renameProject,
   advanceProjectPresentations,
+  reportRuntimeFailure,
   replenishProjectPresentations,
   buildProjectPresentations,
   restoreProjectArtifacts,
@@ -650,6 +651,13 @@ async function executeProjectCommand(options: {
         ...common,
         presentations: options.command.presentations
       });
+    case 'report-runtime-error':
+      return reportRuntimeFailure({
+        ...common,
+        presentationId: options.command.presentationId,
+        message: options.command.message,
+        ...(options.command.step === undefined ? {} : { step: options.command.step })
+      });
     case 'rebuild':
       return buildProjectPresentations({
         ...common,
@@ -750,7 +758,8 @@ function terminalFailureFor(
   kind: ProjectOperationKind,
   events: readonly ProjectEvent[]
 ): { failureKind: 'domain' | 'infrastructure' | 'cancelled'; message: string } | undefined {
-  if (kind === 'rename' || kind === 'advance-presentations') return undefined;
+  if (kind === 'rename' || kind === 'advance-presentations' || kind === 'report-runtime-error')
+    return undefined;
   const outcome = events.findLast((event) => {
     if (kind === 'feedback' || kind === 'prefer' || kind === 'assistant-turn') {
       return (

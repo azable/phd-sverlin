@@ -10,17 +10,30 @@ import preludeSource from './assembly/prelude.ts?raw';
 import {
   AlgorithmError,
   declaredNames,
+  designChoices,
   interpretAlgorithm,
   interpretDesign,
   interpretDomain,
   interpretInput,
   type BlockKind,
+  type DesignChoices,
   type MasterStep,
   type TraceState
 } from './algorithm/interpret.server';
 import { noAtoms, type AtomRegistry } from './algorithm/atoms.server';
 import { drawDefaults } from './library/node/defaults';
-import { alignments, frameRatios, justifications, spacings } from './library/node/presets';
+import { forms } from './library/node/forms';
+import {
+  alignments,
+  frameRatios,
+  justifications,
+  minSizes,
+  namedSizes,
+  presets,
+  radii,
+  spacings,
+  strokeWidths
+} from './library/node/presets';
 import type { FrameSettings } from './library/node/props';
 import { keyedRandom } from './algorithm/random.server';
 
@@ -103,6 +116,17 @@ export class InvalidSvelteSourceError extends Error {
   readonly code?: string;
   readonly line?: number;
   readonly column?: number;
+  /** Further problems found in the same build, each reported as its own diagnostic. */
+  others: InvalidSvelteSourceError[] = [];
+
+  /** One error standing for several, in source order, so a build reports them all at once (up to 20). */
+  static combine(problems: readonly InvalidSvelteSourceError[]): InvalidSvelteSourceError {
+    const [first, ...others] = [...problems].sort(
+      (a, b) => (a.line ?? Infinity) - (b.line ?? Infinity) || (a.column ?? 0) - (b.column ?? 0)
+    );
+    first.others = others.slice(0, 19);
+    return first;
+  }
 
   constructor(message: string, cause?: unknown) {
     super(message);
@@ -129,8 +153,9 @@ export async function compileSvelteComponent(source: string, seed = 1): Promise<
  */
 export function prepareSvelteComponent(source: string): PreparedComponent {
   if (Buffer.byteLength(source, 'utf8') > maximumSourceBytes) {
-    throw new InvalidSvelteSourceError('The Svelte component is too large.');
+    throw new InvalidSvelteSourceError('The Svelte component is too large.', { code: 'too_large' });
   }
+  let viewProblems: InvalidSvelteSourceError[] = [];
   try {
     const { svelteSource, blocks } = extractBlocks(source);
     const ast = parse(svelteSource, { filename: 'Main.svelte' });
@@ -142,7 +167,8 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
         (node.type === 'ExportNamedDeclaration' && 'source' in node && node.source)
       )
         throw new InvalidSvelteSourceError(
-          'Generated components cannot import modules; library components are already in scope.'
+          'Generated components cannot import modules; library components are already in scope.',
+          { code: 'import', start: sourcePosition(source, (node as { start?: number }).start ?? 0) }
         );
     });
     const authoredScript = ast.instance ?? ast.module;
@@ -151,17 +177,64 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
         'Views cannot have their own <script>: input, algorithm, and design values, step, seed, and the library components are already in scope. Compute in markup, using {@const} inside a block or component for reuse.',
         { code: 'view_script', start: sourcePosition(source, authoredScript.start) }
       );
+    // The view is checked before any block runs, so its problems are reported with theirs.
+    const choices = blocks.design
+      ? interpretBlock(source, blocks.design, (body) => designChoices(body))
+      : {};
+    const { tagged, topLevelLinks, problems } = withNodeRefs(svelteSource, ast, source, choices);
+    viewProblems = problems;
     if (!blocks.algorithm)
       throw new InvalidSvelteSourceError(
-        'Add a <script lang="sverlin"> algorithm block whose yield statements mark the steps, such as yield "Start";'
+        'Add a <script lang="sverlin"> algorithm block whose yield statements mark the steps, such as yield "Start";',
+        { code: 'missing_algorithm' }
       );
     const atoms = blocks.domain
       ? interpretBlock(source, blocks.domain, (body) => interpretDomain(body))
       : noAtoms;
+    // Where a block declares a name, so a clash points at the declaration.
+    const at = (name: string, ...candidates: (Block | undefined)[]) => {
+      for (const block of candidates) {
+        const found =
+          block &&
+          new RegExp(`\\b(?:const|let)\\s+${name.replaceAll('$', '\\$')}(?![\\w$])`, 'u').exec(
+            block.body
+          );
+        if (found && block)
+          return { code: 'name_clash', start: sourcePosition(source, block.offset + found.index) };
+      }
+      return { code: 'name_clash' };
+    };
     const shadowed = Object.keys(atoms).find((name) => libraryNames.includes(name));
     if (shadowed)
       throw new InvalidSvelteSourceError(
-        `"${shadowed}" names a library component; choose another type name.`
+        `"${shadowed}" names a library component; choose another type name.`,
+        at(shadowed, blocks.domain)
+      );
+    // Names are checked before any block runs, so a clash is reported before what it causes.
+    const declared = (block: Block | undefined, kind: 'input' | 'algorithm' | 'design') =>
+      block ? interpretBlock(source, block, (body) => declaredNames(body, kind, atoms)) : [];
+    const stateNames = [
+      ...new Set([...declared(blocks.input, 'input'), ...declared(blocks.algorithm, 'algorithm')])
+    ];
+    const designNames = declared(blocks.design, 'design');
+    const clash = designNames.find((name) => stateNames.includes(name));
+    if (clash)
+      throw new InvalidSvelteSourceError(
+        `"${clash}" is defined in the design block and in the input or algorithm block.`,
+        at(clash, blocks.design)
+      );
+    const props = [...stateNames, ...designNames];
+    const typeName = props.find((name) => Object.hasOwn(atoms, name));
+    if (typeName)
+      throw new InvalidSvelteSourceError(
+        `"${typeName}" names an atomic type; choose another variable name.`,
+        at(typeName, blocks.input, blocks.algorithm, blocks.design)
+      );
+    const library = props.find((name) => libraryNames.includes(name));
+    if (library)
+      throw new InvalidSvelteSourceError(
+        `"${library}" names a library component; choose another variable name.`,
+        at(library, blocks.input, blocks.algorithm, blocks.design)
       );
     const input = blocks.input
       ? interpretBlock(source, blocks.input, (body) => interpretInput(body, atoms))
@@ -169,28 +242,8 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
     const master = interpretBlock(source, blocks.algorithm, (body) =>
       interpretAlgorithm(body, input, atoms)
     );
-    const stateNames = Object.keys(master[0].state);
-    const designNames = blocks.design
-      ? interpretBlock(source, blocks.design, (body) => declaredNames(body, 'design'))
-      : [];
-    const clash = designNames.find((name) => stateNames.includes(name));
-    if (clash)
-      throw new InvalidSvelteSourceError(
-        `"${clash}" is defined in the design block and in the input or algorithm block.`
-      );
-    const props = [...stateNames, ...designNames];
-    const typeName = props.find((name) => Object.hasOwn(atoms, name));
-    if (typeName)
-      throw new InvalidSvelteSourceError(
-        `"${typeName}" names an atomic type; choose another variable name.`
-      );
-    const library = props.find((name) => libraryNames.includes(name));
-    if (library)
-      throw new InvalidSvelteSourceError(
-        `"${library}" names a library component; choose another variable name.`
-      );
     const renderers = typeRenderers(ast, atoms, source);
-    const { tagged, topLevelLinks } = withNodeRefs(svelteSource, ast, source);
+    if (viewProblems.length) throw InvalidSvelteSourceError.combine(viewProblems);
     const component = compile(withGeneratedScripts(tagged, props, renderers), {
       filename: 'Main.svelte',
       generate: 'client',
@@ -206,11 +259,16 @@ export function prepareSvelteComponent(source: string): PreparedComponent {
       ...(blocks.design ? { design: blocks.design } : {})
     };
   } catch (cause) {
-    if (cause instanceof InvalidSvelteSourceError) throw cause;
-    throw new InvalidSvelteSourceError(
-      cause instanceof Error ? cause.message : String(cause),
-      cause
-    );
+    const error =
+      cause instanceof InvalidSvelteSourceError
+        ? cause
+        : new InvalidSvelteSourceError(
+            cause instanceof Error ? cause.message : String(cause),
+            cause
+          );
+    throw viewProblems.length && !viewProblems.includes(error)
+      ? InvalidSvelteSourceError.combine([error, ...viewProblems])
+      : error;
   }
 }
 
@@ -229,11 +287,14 @@ export async function bundlePresentation(
     parameters.defaults !== 'fixed' &&
     parameters.defaults !== 'drawn'
   )
-    throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".');
+    throw new InvalidSvelteSourceError('The design value defaults must be "fixed" or "drawn".', {
+      code: 'design_value',
+      start: designAt(prepared, 'defaults')
+    });
   const defaults =
     parameters.defaults === 'fixed' ? undefined : drawDefaults((key) => keyedRandom(seed, key));
   const frame = {
-    ...frameSettings(parameters.frame),
+    ...located(() => frameSettings(parameters.frame), designAt(prepared, 'frame')),
     ...(prepared.topLevelLinks ? { linked: true } : {})
   };
   // Every presentation shows every master step until steps can be mapped to frames.
@@ -279,7 +340,10 @@ function extractBlocks(source: string): {
   for (const match of source.matchAll(sverlinBlock)) {
     const kind = (match[2] ?? 'algorithm') as BlockKind;
     if (blocks[kind])
-      throw new InvalidSvelteSourceError(`A component can have only one ${kind} block.`);
+      throw new InvalidSvelteSourceError(`A component can have only one ${kind} block.`, {
+        code: 'sverlin_block',
+        start: sourcePosition(source, match.index)
+      });
     const start = match.index;
     blocks[kind] = { body: match[3], offset: start + match[0].indexOf('>') + 1 };
     svelteSource =
@@ -331,6 +395,204 @@ function withGeneratedScripts(
   return `<script module>${prelude}</script><script>let { ${names} } = $props(); ${registration}</script>${source}`;
 }
 
+/** An expression in markup, as Svelte's parser gives it (ESTree). */
+type Expression = {
+  type?: string;
+  start?: number;
+  end?: number;
+  value?: unknown;
+  name?: string;
+  computed?: boolean;
+  expressions?: unknown[];
+  quasis?: { value?: { cooked?: string } }[];
+  consequent?: Expression;
+  alternate?: Expression;
+  left?: Expression;
+  right?: Expression;
+  object?: Expression;
+  property?: Expression;
+};
+
+type Attribute = {
+  type?: string;
+  name?: string;
+  start?: number;
+  value?: true | { type?: string; data?: string; expression?: Expression }[];
+};
+
+/**
+ * The values an expression in markup can have, where they can be known without running it: a
+ * literal, either branch of a condition, or a design constant (every option of a pick). Each value
+ * notes the design constant it came from, if any.
+ */
+function possibleValues(
+  expression: Expression | undefined,
+  choices: Record<string, DesignChoices>
+): { value: string | number; from?: string }[] {
+  if (!expression) return [];
+  switch (expression.type) {
+    case 'Literal':
+      return typeof expression.value === 'string' || typeof expression.value === 'number'
+        ? [{ value: expression.value }]
+        : [];
+    case 'TemplateLiteral': {
+      const cooked = expression.quasis?.[0]?.value?.cooked;
+      return expression.expressions?.length === 0 && cooked !== undefined
+        ? [{ value: cooked }]
+        : [];
+    }
+    case 'ConditionalExpression':
+      return [
+        ...possibleValues(expression.consequent, choices),
+        ...possibleValues(expression.alternate, choices)
+      ];
+    case 'LogicalExpression':
+      return [
+        ...possibleValues(expression.left, choices),
+        ...possibleValues(expression.right, choices)
+      ];
+    case 'Identifier':
+    case 'MemberExpression': {
+      // A design constant, or a field of one, such as look.radius.
+      const path: string[] = [];
+      let at: Expression | undefined = expression;
+      while (at?.type === 'MemberExpression') {
+        const key =
+          !at.computed && at.property?.type === 'Identifier'
+            ? at.property.name
+            : at.property?.type === 'Literal'
+              ? String(at.property.value)
+              : undefined;
+        if (key === undefined) return [];
+        path.unshift(key);
+        at = at.object;
+      }
+      if (at?.type !== 'Identifier' || !at.name) return [];
+      let found: DesignChoices | undefined = choices[at.name];
+      for (const key of path) found = found && 'fields' in found ? found.fields[key] : undefined;
+      const from = [at.name, ...path].join('.');
+      return found && 'values' in found ? found.values.map((value) => ({ value, from })) : [];
+    }
+    default:
+      return [];
+  }
+}
+
+const layouts = ['row', 'column', 'wrap', 'grid', 'free'];
+const named = (scale: object, numeric = true) => ({ names: Object.keys(scale), numeric });
+/** The props each library component takes, with the names a prop's text value can be, if limited. */
+const libraryProps: Record<
+  'Node' | 'Link',
+  Record<string, { names: string[]; numeric: boolean } | null>
+> = {
+  Node: {
+    value: null,
+    items: null,
+    layout: named(Object.fromEntries(layouts.map((name) => [name, name])), false),
+    columns: null,
+    nested: named(Object.fromEntries(layouts.map((name) => [name, name])), false),
+    item: null,
+    type: null,
+    shape: named(presets, false),
+    fill: null,
+    stroke: null,
+    opacity: null,
+    color: null,
+    font: named({ sans: 0, serif: 0, mono: 0 }, false),
+    size: named(namedSizes),
+    weight: named({ normal: 0, bold: 0 }, false),
+    padding: named(spacings),
+    gap: named(spacings),
+    align: named(alignments, false),
+    justify: named(justifications, false),
+    radius: named(radii, false),
+    strokeWidth: named(strokeWidths),
+    minSize: named(minSizes),
+    children: null,
+    key: null,
+    constraints: null,
+    flow: named({ x: 0, y: 0 }, false),
+    form: named(Object.fromEntries(forms.map((name) => [name, name])), false),
+    curve: named({ straight: 0, curved: 0 }, false),
+    layoutSeed: null
+  },
+  Link: {
+    from: null,
+    to: null,
+    directed: null,
+    dashed: null,
+    label: null,
+    stroke: null,
+    strokeWidth: named(strokeWidths),
+    curve: named({ straight: 0, curved: 0 }, false),
+    bend: null
+  }
+};
+
+/**
+ * Reject a prop a library component does not take, or a written value it cannot use, such as
+ * shape="circle", which would otherwise be ignored without a word.
+ */
+function checkProps(
+  component: 'Node' | 'Link',
+  attributes: readonly Attribute[],
+  start: number,
+  source: string,
+  problems: InvalidSvelteSourceError[],
+  choices: Record<string, DesignChoices>
+): void {
+  const props = libraryProps[component];
+  for (const attribute of attributes) {
+    if (attribute.type !== 'Attribute' || !attribute.name) continue;
+    const at = { start: sourcePosition(source, attribute.start ?? start) };
+    if (!(attribute.name in props)) {
+      problems.push(
+        new InvalidSvelteSourceError(
+          `<${component}> has no prop ${attribute.name}. Its props are ${Object.keys(props)
+            .filter((name) => name !== 'children')
+            .join(', ')}.`,
+          { code: 'unknown_prop', ...at }
+        )
+      );
+      continue;
+    }
+    const allowed = props[attribute.name];
+    if (!allowed) continue;
+    const parts = Array.isArray(attribute.value) ? attribute.value : [];
+    const [part] = parts;
+    const written = parts.length === 1 && part.type === 'Text';
+    const candidates =
+      parts.length !== 1
+        ? []
+        : written && part.data !== undefined
+          ? [{ value: part.data, from: undefined }]
+          : part.type === 'MustacheTag'
+            ? possibleValues(part.expression, choices)
+            : [];
+    const bad = candidates.find(({ value }) =>
+      typeof value === 'number' ? !allowed.numeric : !allowed.names.includes(value)
+    );
+    if (!bad) continue;
+    const shown = typeof bad.value === 'string' ? `"${bad.value}"` : String(bad.value);
+    const expression = part.expression;
+    const what = written
+      ? `${attribute.name}=${shown} is`
+      : `${attribute.name}={${source.slice(expression?.start ?? 0, expression?.end ?? 0)}} can be ${shown}${bad.from ? `, from the design value ${bad.from},` : ''} which is`;
+    const hint =
+      attribute.name === 'shape' && bad.value === 'circle'
+        ? ' For a circle, give a framed node (one with a value, or shape="box") radius="full".'
+        : '';
+    problems.push(
+      new InvalidSvelteSourceError(
+        `<${component}> ${what} not a value it takes: use ${allowed.names
+          .map((name) => `'${name}'`)
+          .join(', ')}${allowed.numeric ? ', or a number in braces' : ''}.${hint}`,
+        { code: 'invalid_prop', ...at }
+      )
+    );
+  }
+}
+
 /**
  * Tag every <Node> and <Link> in the view with the line and column (both from 1) of its tag in the
  * authored source, as the hidden prop __ref, so a rendered node or link can be traced back to the
@@ -340,13 +602,15 @@ function withGeneratedScripts(
 function withNodeRefs(
   svelteSource: string,
   ast: { html?: unknown },
-  source: string
-): { tagged: string; topLevelLinks: boolean } {
+  source: string,
+  choices: Record<string, DesignChoices>
+): { tagged: string; topLevelLinks: boolean; problems: InvalidSvelteSourceError[] } {
+  const problems: InvalidSvelteSourceError[] = [];
   type Tag = {
     type?: string;
     name?: string;
     start?: number;
-    attributes?: { name?: string; start?: number }[];
+    attributes?: Attribute[];
   };
   const tags: { start: number; name: string; links: boolean }[] = [];
   let topLevelLinks = false;
@@ -362,9 +626,20 @@ function withNodeRefs(
     if (library && tag.start !== undefined) {
       const reserved = tag.attributes?.find(({ name }) => name?.startsWith('__'));
       if (reserved)
-        throw new InvalidSvelteSourceError(
-          `${tag.name} props starting with __, such as ${reserved.name}, are reserved for the library.`,
-          { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
+        problems.push(
+          new InvalidSvelteSourceError(
+            `${tag.name} props starting with __, such as ${reserved.name}, are reserved for the library.`,
+            { code: 'reserved_prop', start: sourcePosition(source, reserved.start ?? tag.start) }
+          )
+        );
+      else
+        checkProps(
+          tag.name as 'Node' | 'Link',
+          tag.attributes ?? [],
+          tag.start,
+          source,
+          problems,
+          choices
         );
       const entry = { start: tag.start, name: tag.name as string, links: false };
       tags.push(entry);
@@ -385,7 +660,7 @@ function withNodeRefs(
     const end = start + name.length + 1;
     tagged = `${tagged.slice(0, end)} __ref="${line}:${column + 1}"${links ? ' __links' : ''}${tagged.slice(end)}`;
   }
-  return { tagged, topLevelLinks };
+  return { tagged, topLevelLinks, problems };
 }
 
 /**
@@ -524,6 +799,23 @@ function visit(value: unknown, check: (node: { type: string }) => void): void {
  * The page frame from the design value `frame`: absent, a ratio such as '4:3', or an object with any
  * of ratio, justify, align, and padding. Unset justify and align come from the drawn defaults.
  */
+/** Where the design block declares a design value, such as frame. */
+function designAt(prepared: PreparedComponent, name: string) {
+  const block = prepared.design;
+  const found = block && new RegExp(`\\bconst\\s+${name}\\b`, 'u').exec(block.body);
+  return found && block ? sourcePosition(prepared.source, block.offset + found.index) : undefined;
+}
+
+/** Run a check of a design value, placing any error it raises at the value's declaration. */
+function located<T>(check: () => T, start: ReturnType<typeof designAt>): T {
+  try {
+    return check();
+  } catch (cause) {
+    if (!(cause instanceof InvalidSvelteSourceError) || cause.line !== undefined) throw cause;
+    throw new InvalidSvelteSourceError(cause.message, { code: 'design_value', start });
+  }
+}
+
 function frameSettings(value: unknown): FrameSettings {
   const given: Record<string, unknown> =
     value === undefined

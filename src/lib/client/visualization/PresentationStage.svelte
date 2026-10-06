@@ -290,6 +290,8 @@
             selection={selected?.elements.map(({ id }) => id) ?? []}
             onSelectionChange={(elements) => visualSelections.set(presentationId, step, elements)}
             onViewChange={(view) => onViewChange(presentationId, view)}
+            onRuntimeError={(failure) =>
+              session.reportRuntimeFailure({ presentationId, ...failure })}
           />
         </div>
       </div>

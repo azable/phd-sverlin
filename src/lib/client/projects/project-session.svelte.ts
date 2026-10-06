@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
@@ -64,6 +65,13 @@ export class ProjectSession {
   #request?: AbortController;
   #commandRequest?: AbortController;
   #refillRequest?: AbortController;
+  /** View failures the presentations reported, waiting to be recorded, by presentation and message. */
+  #runtimeReports = new SvelteMap<
+    string,
+    { presentationId: string; step?: number; message: string }
+  >();
+  #runtimeReportsSent = new SvelteSet<string>();
+  #runtimeReportRequest?: AbortController;
   #refillBlocked = false;
   #loadVersion = 0;
   /** Last non-cancellation failure while filling the ahead-of-time presentation buffer. */
@@ -209,6 +217,7 @@ export class ProjectSession {
     this.#request?.abort();
     this.#commandRequest?.abort();
     this.#refillRequest?.abort();
+    this.#runtimeReportRequest?.abort();
     this.disconnect();
   }
 
@@ -295,11 +304,65 @@ export class ProjectSession {
     }
   }
 
+  /**
+   * Record that a presentation's view failed while drawing, for the assistant to fix. Reports are
+   * sent in the background when the project is idle, once each, without affecting the participant's
+   * own commands or messages.
+   */
+  reportRuntimeFailure(failure: { presentationId: string; step?: number; message: string }): void {
+    const key = `${failure.presentationId} ${failure.message}`;
+    if (this.readOnly || this.#runtimeReportsSent.has(key)) return;
+    this.#runtimeReports.set(key, failure);
+    this.flushRuntimeReports();
+  }
+
+  private flushRuntimeReports(): void {
+    const next = this.#runtimeReports.entries().next();
+    if (
+      next.done ||
+      !this.#resource ||
+      !this.atHead ||
+      this.readOnly ||
+      this.pending ||
+      this.#runtimeReportRequest ||
+      activeProjectOperation(this.events)
+    )
+      return;
+    const [key, failure] = next.value;
+    const request = new AbortController();
+    this.#runtimeReportRequest = request;
+    void fetch(`/api/projects/${encodeURIComponent(this.projectId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'report-runtime-error',
+        ...failure,
+        operationId: crypto.randomUUID(),
+        expectedHead: this.head
+      }),
+      signal: request.signal
+    })
+      .then(async (response) => {
+        // A conflict means the project moved on; the report waits for the next quiet moment.
+        if (response.status === 409) return;
+        this.#runtimeReports.delete(key);
+        this.#runtimeReportsSent.add(key);
+        if (response.ok) await this.reloadResource(request.signal);
+      })
+      .catch(() => {
+        if (!request.signal.aborted) this.#runtimeReports.delete(key);
+      })
+      .finally(() => {
+        if (this.#runtimeReportRequest === request) this.#runtimeReportRequest = undefined;
+      });
+  }
+
   /** Explicitly retry a failed automatic presentation refill. */
   retryPresentationRefill(): void {
     this.#refillBlocked = false;
     this.refillError = null;
     this.reconcilePresentationBuffer();
+    this.flushRuntimeReports();
   }
 
   /** Stop automatic generation when the local task timer reaches its deadline. */
@@ -420,6 +483,7 @@ export class ProjectSession {
       this.#workspace = null;
       this.restoreRefillFailure();
       this.reconcilePresentationBuffer();
+      this.flushRuntimeReports();
       return;
     }
     const workspace = value as WorkspaceResource;
@@ -437,6 +501,7 @@ export class ProjectSession {
     });
     this.restoreRefillFailure();
     this.reconcilePresentationBuffer();
+    this.flushRuntimeReports();
   }
 
   private restoreRefillFailure(): void {

@@ -36,7 +36,7 @@ Arrangement:
 Frame and colour:
 
 - `padding`: space inside the frame.
-- `radius`: `'none'`, `'small'`, `'medium'`, or `'full'` (a circle for a short value, a pill for a long one).
+- `radius`: `'none'`, `'small'`, `'medium'`, or `'full'` (a circle for a short value, a pill for a long one). There is no circle shape: a circle is a framed node with `radius="full"`, such as `<Node value="v1" radius="full" />` (a value is a box) or `<Node shape="box" radius="full">v1</Node>` (text written as children is plain, unframed, unless given a shape).
 - `strokeWidth`: `'none'`, `'thin'`, `'thick'`, or a number of pixels.
 - `minSize`: `'none'`, `'small'`, `'medium'`, `'large'`, or a number of em; the smallest width and height.
 - `fill` and `stroke`: background and stroke (border) colours, each a palette name (`'neutral'`, `'blue'`, `'green'`, `'amber'`, `'red'`, `'purple'`; a light shade as a fill and a strong shade as a stroke) or any CSS colour. `stroke="none"` (or `stroke={false}`) turns the stroke off whatever its width. What a colour means, such as the element being examined or one already checked, is up to you; make it consistent within a visualization, and draw it in the design block when the request leaves it open.
@@ -64,6 +64,7 @@ Example, with domain, input, algorithm, design, and a script-free view:
 ```svelte
 <script lang="sverlin" domain>
   const Int = type('integer');
+  const Index = type('integer', { min: -1 });
 </script>
 
 <script lang="sverlin" input>
@@ -71,9 +72,9 @@ Example, with domain, input, algorithm, design, and a script-free view:
 </script>
 
 <script lang="sverlin">
-  let i = -1;
+  let i = Index(-1);
   yield 'Start';
-  for (i = 0; i < values.length; i++) {
+  for (i = Index(0); i < values.length; i++) {
     yield `Visit index ${i}`;
   }
   yield 'Done';
@@ -117,9 +118,9 @@ A matrix needs no snippet: `<Node items={grid} layout="column" nested="row" />` 
 - `flow`: in a free layout, `'x'` or `'y'` makes arrows point rightwards or downwards, as for a list or a tree; only forms that run that way are drawn.
 - `form`: the shape a free layout gives the structure its links make. The structure is read from the arrows present at every step (a link that comes and goes is drawn on top of it but does not change it): a path such as a linked list, a cycle, a tree, or a layered graph (acyclic, with nodes that have several parents). Any structure can lie along its reading order (a path in link order, a tree depth first, a layered graph each node after its parents) as `'line'`, `'snake'` (rows read back and forth), `'wave'`, `'arc'`, or `'scatter'` (free positions that keep each node near the next). A cycle can also take `'ring'`; a tree `'tree-down'`, `'tree-right'`, `'radial'`, or `'indented'`; a layered graph `'layers-down'` or `'layers-right'`. Unset, every presentation draws a form that suits the space it has and stretches it to fill that space, and arrows curve round other nodes and labels.
 - `curve`: `'straight'` or `'curved'`, whether this node's arrows prefer to run straight or to curve; unset, each link draws its own.
-- `layoutSeed`: keeps this node's layout of its children the same in every presentation. Each arrangement draws its shape, spacing, and curves from a seed of its own, which selections report with the element; when the participant likes a layout ("keep this layout but …"), set `layoutSeed` on the node that arranges it to the reported seed, so that layout stays while everything else still varies. Pin `form` or `curve` only if the participant names them.
+- `layoutSeed`: keeps this node's layout of its children the same in every presentation. Each arrangement draws its shape, spacing, and curves from a seed of its own, which selections report with the element; when the participant likes a layout ("keep this layout but …"), set `layoutSeed` on the node that arranges it to the reported seed, and `form` to the reported form, so that layout stays while everything else still varies. Pin `curve` only if the participant names it.
 
-Leave `form` and `flow` unset, or draw them in the design block, and draw which relations to include, so presentations differ until the participant says what they prefer; fix them only when asked, such as for a list that must run left to right.
+Leave `form` and `flow` unset, so each presentation draws among every form that suits the structure and the space (a design pick between a few forms only narrows that), and draw which relations to include, so presentations differ until the participant says what they prefer; fix them only when asked, such as for a list that must run left to right. A flow suits directed structures; an undirected graph has no flow, and its links are `directed={false}`.
 
 ```svelte
 <Node layout="free" constraints={['head above ' + first]} flow="x">

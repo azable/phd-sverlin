@@ -13,7 +13,8 @@
     label,
     selection = [],
     onSelectionChange = () => {},
-    onViewChange = () => {}
+    onViewChange = () => {},
+    onRuntimeError = () => {}
   }: {
     presentation: BrowserBundlePresentation;
     step: number;
@@ -23,6 +24,8 @@
     onSelectionChange?: (elements: SelectedElement[]) => void;
     /** The canvas zoom and pan the participant left the presentation at. */
     onViewChange?: (view: CanvasView) => void;
+    /** The view's own code failed as it drew a step (or, without a step, at some other moment). */
+    onRuntimeError?: (failure: { step?: number; message: string }) => void;
   } = $props();
 
   let iframe = $state<HTMLIFrameElement>();
@@ -64,12 +67,35 @@
     elements: v.pipe(v.array(selectedElementSchema), v.maxLength(50))
   });
 
+  // The view's own code can fail as it draws a step; the page reports it, and it is shown here.
+  const errorMessage = v.object({
+    type: v.literal('sverlin:error'),
+    message: v.pipe(v.string(), v.maxLength(500)),
+    step: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0)))
+  });
+  let failure = $state<v.InferOutput<typeof errorMessage>>();
+  $effect(() => {
+    void document;
+    failure = undefined;
+  });
+
   $effect(() => {
     const receive = (event: MessageEvent) => {
       if (!iframe || event.source !== iframe.contentWindow) return;
       const data = event.data as { type?: unknown } & Partial<Record<keyof CanvasView, unknown>>;
       if (data?.type === 'sverlin:loaded') {
         loaded = true;
+        return;
+      }
+      if (data?.type === 'sverlin:error') {
+        const parsed = v.safeParse(errorMessage, data);
+        if (parsed.success) {
+          failure = parsed.output;
+          onRuntimeError({
+            message: parsed.output.message,
+            ...(parsed.output.step === undefined ? {} : { step: parsed.output.step })
+          });
+        }
         return;
       }
       if (data?.type === 'sverlin:selection') {
@@ -92,11 +118,23 @@
   });
 </script>
 
-<iframe
-  bind:this={iframe}
-  title={label}
-  srcdoc={document}
-  sandbox="allow-scripts"
-  referrerpolicy="no-referrer"
-  class="block h-full w-full border-0 bg-white"
-></iframe>
+<div class="relative h-full w-full">
+  <iframe
+    bind:this={iframe}
+    title={label}
+    srcdoc={document}
+    sandbox="allow-scripts"
+    referrerpolicy="no-referrer"
+    class="block h-full w-full border-0 bg-white"
+  ></iframe>
+  {#if failure}
+    <p
+      role="alert"
+      class="absolute inset-x-2 bottom-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
+    >
+      {failure.step === undefined
+        ? 'The view failed while drawing'
+        : `The view failed while drawing step ${failure.step + 1}`}: {failure.message}
+    </p>
+  {/if}
+</div>

@@ -78,6 +78,65 @@ export function interpretDesign(body: string, seed: number): TraceState {
   }).bindings().state;
 }
 
+/**
+ * The values a design constant can take, read without drawing: a literal, or every option of a
+ * pick over literals, and the same for each field of an object. Anything else is left out.
+ */
+export type DesignChoices =
+  | { values: readonly (string | number)[] }
+  | { fields: Record<string, DesignChoices> };
+
+/** Every design constant's possible values, so the view's props can be checked for every seed. */
+export function designChoices(body: string): Record<string, DesignChoices> {
+  const { root } = parseBlock(body, 'design');
+  const known: Record<string, DesignChoices> = {};
+  const literal = (node: AnyNode): string | number | undefined => {
+    if (
+      node.type === 'Literal' &&
+      (typeof node.value === 'string' || typeof node.value === 'number')
+    )
+      return node.value;
+    if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
+      return node.quasis[0]?.value.cooked ?? undefined;
+    return undefined;
+  };
+  const choicesOf = (node: AnyNode): DesignChoices | undefined => {
+    const value = literal(node);
+    if (value !== undefined) return { values: [value] };
+    if (node.type === 'Identifier') return known[node.name];
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'Identifier' &&
+      node.callee.name === 'pick' &&
+      node.arguments[0]?.type === 'ArrayExpression'
+    ) {
+      const options = node.arguments[0].elements.map((element) =>
+        element && element.type !== 'SpreadElement' ? literal(element) : undefined
+      );
+      const values = options.filter((option) => option !== undefined);
+      return values.length ? { values } : undefined;
+    }
+    if (node.type === 'ObjectExpression') {
+      const fields: Record<string, DesignChoices> = {};
+      for (const property of node.properties) {
+        if (property.type !== 'Property' || property.computed) continue;
+        const key = property.key.type === 'Identifier' ? property.key.name : literal(property.key);
+        const choices = key === undefined ? undefined : choicesOf(property.value);
+        if (choices) fields[String(key)] = choices;
+      }
+      return { fields };
+    }
+    return undefined;
+  };
+  for (const statement of root.body)
+    if (statement.type === 'VariableDeclaration' && statement.kind === 'const')
+      for (const declarator of statement.declarations) {
+        const choices = declarator.init ? choicesOf(declarator.init) : undefined;
+        if (choices && declarator.id.type === 'Identifier') known[declarator.id.name] = choices;
+      }
+  return known;
+}
+
 /** Names a block declares at its top level, read without running it. */
 export function declaredNames(body: string, kind: BlockKind, atoms?: AtomRegistry): string[] {
   const { root } = parseBlock(body, kind, atoms);
@@ -233,6 +292,44 @@ class Interpreter {
     return new Atom(type, value as string | number | boolean);
   }
 
+  /**
+   * Input and algorithm values all have domain types: every primitive a variable, element, or
+   * property holds is a typed value, or null for nothing yet. Design values are plain.
+   */
+  #typed(value: Value, node: AnyNode, name: string): void {
+    if (this.#kind === 'design') return;
+    const plain = untypedPart(value, name);
+    if (!plain) return;
+    const shown =
+      typeof plain.value === 'string' ? JSON.stringify(plain.value) : String(plain.value);
+    const fitting = Object.values(this.#atoms).filter(
+      (type) => !type.values?.length && atomProblem(type, plain.value) === undefined
+    );
+    const base: AtomBase =
+      typeof plain.value === 'boolean'
+        ? 'boolean'
+        : typeof plain.value === 'string'
+          ? 'text'
+          : Number.isInteger(plain.value)
+            ? 'integer'
+            : 'number';
+    const example = { integer: 'Count', number: 'Amount', boolean: 'Flag', text: 'Label' }[base];
+    const fix = fitting.length
+      ? `Write it as ${fitting
+          .slice(0, 3)
+          .map((type) => `${type.name}(${shown})`)
+          .join(' or ')}, or declare a type that says what it means in the domain block.`
+      : `Declare a type that says what it means in the domain block, such as const ${example} = type('${base}');, and write ${example}(${shown}).`;
+    const computed =
+      node.type === 'Literal' || node.type === 'ArrayExpression' || node.type === 'ObjectExpression'
+        ? ''
+        : ' Comparisons, .length, .indexOf(), and Math functions give plain values; wrap the result, as in Flag(a < b) or Count(items.length).';
+    this.#fail(
+      node,
+      `${plain.path} would be the plain ${typeof plain.value} ${shown}, but input and algorithm values must have a domain type. ${fix}${computed}`
+    );
+  }
+
   #fail(node: AnyNode, message: string): never {
     throw new AlgorithmError(message, this.#offset(node));
   }
@@ -279,6 +376,7 @@ class Interpreter {
                 : `"${name}" is already declared.`
             );
           const value = declarator.init ? this.#expression(declarator.init, scope) : undefined;
+          if (declarator.init) this.#typed(value, declarator.init, name);
           scope.bindings.set(name, { value, constant: node.kind === 'const' });
         }
         return 'normal';
@@ -478,6 +576,7 @@ class Interpreter {
           node.operator === '='
             ? right
             : this.#binary(node.operator.slice(0, -1), target.get(), right, node);
+        this.#typed(value, node.right, targetName(node.left as Expression));
         target.set(value);
         return value;
       }
@@ -490,6 +589,7 @@ class Interpreter {
           node.operator === '++' ? before + 1 : before - 1,
           node
         );
+        this.#typed(after, node, targetName(node.argument));
         target.set(after);
         return node.prefix ? after : current;
       }
@@ -596,6 +696,14 @@ class Interpreter {
       return fn(...args.map((argument) => this.#number(argument, node)));
     }
     if (!Array.isArray(object)) this.#fail(callee, `.${name}() is only available on arrays.`);
+    if (name === 'push' || name === 'unshift')
+      args.forEach((argument, index) =>
+        this.#typed(
+          argument,
+          node.arguments[index],
+          `an item added by ${targetName(callee.object as Expression)}.${name}()`
+        )
+      );
     this.#charge(node, object.length);
     switch (name) {
       case 'push':
@@ -768,6 +876,45 @@ class Interpreter {
         `Arrays and objects are limited to ${algorithmLimits.maximumCollectionLength} entries.`
       );
   }
+}
+
+/**
+ * The first primitive inside a value that has no domain type, and where it is. Each array or object
+ * is checked once, however often it is shared, so a value that repeats itself stays cheap to check.
+ */
+function untypedPart(
+  value: Value,
+  path: string,
+  checked = new Set<object>()
+): { path: string; value: string | number | boolean } | undefined {
+  if (value === null || value === undefined || value instanceof Atom) return undefined;
+  if (typeof value === 'object') {
+    if (value === mathMarker || checked.has(value)) return undefined;
+    checked.add(value);
+    const entries: [string, Value][] = Array.isArray(value)
+      ? value.map((item, index) => [`[${index}]`, item])
+      : Object.entries(value).map(([key, item]) => [`.${key}`, item]);
+    for (const [step, item] of entries) {
+      const found = untypedPart(item, path + step, checked);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  return { path, value };
+}
+
+/** How an assignment target reads in the source, such as distances[neighbor]. */
+function targetName(target: Expression | Pattern): string {
+  if (target.type === 'Identifier') return target.name;
+  if (target.type === 'MemberExpression') {
+    const property = target.property;
+    const inner = targetName(target.object as Expression);
+    if (!target.computed && property.type === 'Identifier') return `${inner}.${property.name}`;
+    if (property.type === 'Identifier') return `${inner}[${property.name}]`;
+    if (property.type === 'Literal') return `${inner}[${JSON.stringify(property.value)}]`;
+    return `${inner}[…]`;
+  }
+  return 'the value';
 }
 
 function kind(value: Value): string {

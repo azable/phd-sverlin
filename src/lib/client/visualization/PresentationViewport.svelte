@@ -18,6 +18,8 @@
     selection?: readonly string[];
     onSelectionChange?: (elements: SelectedElement[]) => void;
     onViewChange?: (view: CanvasView) => void;
+    /** The presentation's own code failed as it drew, in modes that run authored code. */
+    onRuntimeError?: (failure: { step?: number; message: string }) => void;
   };
 
   let {
@@ -26,7 +28,8 @@
     label,
     selection,
     onSelectionChange,
-    onViewChange
+    onViewChange,
+    onRuntimeError
   }: Omit<ViewportProps, 'presentation'> & { presentation?: RenderablePresentation } = $props();
   const viewports = import.meta.glob<{
     default: Component<ViewportProps>;
@@ -43,7 +46,15 @@
 
 <section class="relative min-h-0 flex-1 overflow-hidden bg-white" aria-label={label}>
   {#if presentation && Viewport}
-    <Viewport {presentation} {step} {label} {selection} {onSelectionChange} {onViewChange} />
+    <Viewport
+      {presentation}
+      {step}
+      {label}
+      {selection}
+      {onSelectionChange}
+      {onViewChange}
+      {onRuntimeError}
+    />
   {:else}
     <div class="flex min-h-full items-center justify-center p-6">
       <div class="flex w-full max-w-md flex-col gap-3">

@@ -33,6 +33,7 @@ import { projectCreatedEventSchema } from './project-created';
 import { projectRenamedEventSchema } from './project-renamed';
 import { systemNotifiedEventSchema } from './system-notified';
 import { visualizationCandidatesAdvancedEventSchema } from './visualization-candidates-advanced';
+import { visualizationRuntimeFailedEventSchema } from './visualization-runtime-failed';
 import {
   visualizationPreferenceRecordedEventSchema,
   visualizationPresentedEventSchema
@@ -59,6 +60,7 @@ export const projectEventSchema = v.variant('type', [
   visualizationPresentedEventSchema,
   visualizationPreferenceRecordedEventSchema,
   visualizationCandidatesAdvancedEventSchema,
+  visualizationRuntimeFailedEventSchema,
   assistantRespondedEventSchema,
   systemNotifiedEventSchema
 ]);

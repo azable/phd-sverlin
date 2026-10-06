@@ -11,18 +11,20 @@ export const sverlinStarter = {
 /** A small self-contained algorithm example for administrator projects. */
 export const linearSearchSource = `<script lang="sverlin" domain>
   const Int = type('integer');
+  const Index = type('integer', { min: -1 });
+  const Found = type('boolean');
 </script>
 <script lang="sverlin" input>
   const values = [Int(3), Int(8), Int(5), Int(2), Int(7)];
   const target = Int(2);
 </script>
 <script lang="sverlin">
-  let i = -1;
-  let found = false;
+  let i = Index(-1);
+  let found = Found(false);
   yield 'Start';
-  for (i = 0; i < values.length; i++) {
+  for (i = Index(0); i < values.length; i++) {
     if (values[i] === target) {
-      found = true;
+      found = Found(true);
       yield \`Found \${target} at index \${i}\`;
       break;
     }

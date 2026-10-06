@@ -183,6 +183,15 @@ const presenters = {
       'assistant',
       'Finishing…'
     ),
+  'visualization.runtime-failed': (event) =>
+    details(
+      'Visualization failed while drawing',
+      `${event.payload.step === undefined ? '' : `Step ${event.payload.step + 1} · `}${event.payload.message}`,
+      'failure',
+      'Recording the failure…',
+      false,
+      'destructive'
+    ),
   'system.notified': (event) =>
     details(
       'System notice',

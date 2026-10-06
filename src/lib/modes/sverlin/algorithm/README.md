@@ -2,7 +2,7 @@
 
 A component describes its visualization in `<script lang="sverlin">` blocks, written in a restricted subset of JavaScript, followed by a script-free Svelte view. The algorithm block is required, even for a single step (`yield 'Start';`); the domain, input, and design blocks are optional.
 
-1. `<script lang="sverlin" input>`: the fixed starting data. Declare the initial state with `const` or `let`, such as `const values = [Int(3), Int(8), Int(5)];` with `Int` defined in the domain block. Every presentation shares it.
+1. `<script lang="sverlin" input>`: the fixed starting data. Declare the initial state with `const` or `let`, such as `const values = [Int(3), Int(8), Int(5)];` with `Int` defined in the domain block; every value has a domain type (see Atomic types). Every presentation shares it.
 2. `<script lang="sverlin">`: the algorithm. It starts from the input variables, may update them and declare more, and marks steps with `yield`. It runs once; every presentation shows the same algorithm.
 3. `<script lang="sverlin" design>`: presentation choices drawn from each presentation's seed, so the two presentations in a comparison can differ. Each top-level `const` is a design value.
 
@@ -48,7 +48,7 @@ A type without a renderer uses the renderer of the nearest type it refines, and 
 
 ## Steps
 
-- `yield 'label';` records a step: a copy of every top-level input and algorithm variable. Variables declared inside loops or blocks are not recorded; declare a loop index at the top level (`let i = -1;`) and write `for (i = 0; ...)` when the view needs it. A top-level variable not yet declared at a step is `null`.
+- `yield 'label';` records a step: a copy of every top-level input and algorithm variable. Variables declared inside loops or blocks are not recorded; declare a loop index at the top level (`let i = Index(-1);`) and write `for (i = Index(0); ...)` when the view needs it. A top-level variable not yet declared at a step is `null`.
 - Labels must be unique across the whole algorithm, because they identify steps when presentations are compared. Inside loops, include what distinguishes the step, such as ``yield `Compare index ${i}`;``.
 - `return;` stops the algorithm early.
 
@@ -60,7 +60,7 @@ Give values meaning with atomic types. No types are predefined: define each one 
 - a refinement of a type defined earlier, with optional `unit`, `min`, and `max`: `const Height = type(Int, { unit: 'cm', min: 0 });`
 - an enumeration of allowed text or number values: `const Suit = type(['♠', '♥', '♦', '♣']);`
 
-Create typed values with a type's name in the input or algorithm block, such as `const values = [Int(3), Int(8), Int(5)];` and `const target = Int(8);`. Plain values remain allowed and stay untyped.
+Create typed values with a type's name in the input or algorithm block, such as `const values = [Int(3), Int(8), Int(5)];` and `const target = Int(8);`. Input and algorithm values all have domain types: every number, boolean, and text that a variable, array element, or object property holds is a typed value, or `null` for nothing yet, so a loop index is `let i = Index(-1);`, a flag `let found = Found(false);`, and a distance `Distance(0)`. Define a type for each meaning, such as `Index`, `Distance`, or `Visited`, rather than reusing one general type. Plain literals can still appear in expressions, as in `i + 1` or `x < 10`, but storing a plain result is an error: comparisons, `.length`, `.indexOf()`, and `Math` functions give plain values, so wrap a result to keep it, as in `found = Found(values[i] === target)` or `n = Count(values.length)`.
 
 Typed values behave like their plain values in comparisons, conditions, `===`, `.indexOf`, `.includes`, template strings, and indexing, and they keep their type as the algorithm moves them between variables and arrays. Arithmetic keeps types too: `Int + Int` is an `Int`; a refined type combined with the type it refines or with a plain number keeps the refined type (`Height(150) + 5` is a `Height`); an integer type whose result is no longer whole, such as `Int(7) / Int(2)`, gives an untyped number. Combining or comparing unrelated types, such as a `Height` and a `Weight`, arithmetic on enumerations or boolean types, and leaving a type's `min` or `max` are errors. Type names cannot be used as variable names.
 
@@ -68,7 +68,7 @@ The view receives plain values; types only affect how nodes are drawn (see Type 
 
 ## Design values
 
-- Draws are `pick(['row', 'grid'])`, `int(3, 6)` (inclusive), `real(0.5, 1.5)`, and `chance(0.3)`, each only in the value of a top-level `const`, either the whole value or inside its object and array literals, such as `const layout = pick(['row', 'grid']);` or `const look = { cells: pick(['box', 'circle']), sizes: [int(1, 3)] };`. Other design constants may combine earlier ones.
+- Draws are `pick(['row', 'grid'])`, `int(3, 6)` (inclusive), `real(0.5, 1.5)`, and `chance(0.3)`, each only in the value of a top-level `const`, either the whole value or inside its object and array literals, such as `const layout = pick(['row', 'grid']);` or `const look = { radius: pick(['medium', 'full']), sizes: [int(1, 3)] };`. Other design constants may combine earlier ones.
 - Use design values for styling, layout, wording, and library component props. The input and algorithm cannot see them, so steps never depend on the seed.
 - The design value `defaults` controls drawn `Node` defaults: `'drawn'` (the default) gives every presentation its own seeded radius, stroke width (sometimes none), padding, tints, gap, and font wherever props leave them unset; `'fixed'` uses the plain presets.
 - The design value `frame` shapes the page that holds the view's top-level nodes: a ratio such as `const frame = '4:3';`, or an object with any of `ratio` (`'16:9'`, the default, `'4:3'`, `'3:2'`, `'1:1'`, `'3:4'`, or `'9:16'`), `justify`, `align`, `padding` (default `'large'`), `layout` (`'column'`, `'row'`, or `'free'`), and `constraints` between top-level nodes by their `key`, as for a node's own (put `<Link>` components at the top of the view to join top-level nodes), and `layoutSeed` to keep a free top-level layout the participant liked, such as `const frame = { justify: 'between' };` or `const frame = { layout: 'free', constraints: ['note below cells'] };`. Settings may be drawn, as in `{ layout: pick(['column', 'free']) }`; unset `justify`, `align`, and `layout` are drawn defaults, so the top-level nodes form a column in some presentations and a free arrangement in others.

@@ -287,6 +287,56 @@ export function advanceProjectPresentations(
   });
 }
 
+/**
+ * Record that a presentation's view failed as it drew a step in the participant's browser, once
+ * per presentation and message, so the assistant sees it and can fix the view.
+ */
+export function reportRuntimeFailure(
+  options: {
+    projectId: string;
+    expectedHead: EventId;
+    operationId: string;
+    presentationId: string;
+    step?: number;
+    message: string;
+  },
+  dependencies: ProjectServiceDependencies = defaultProjectServiceDependencies
+): Promise<ProjectCommandResult> {
+  return runProjectCommand(options.projectId, async () => {
+    const before = await checkedDocument(options.projectId, options.expectedHead, dependencies);
+    const presented = before.events.some(
+      (event) =>
+        event.type === 'visualization.presented' &&
+        event.payload.presentation.presentationId === options.presentationId
+    );
+    if (!presented) throw new Error('Only a presented visualization can report a failure.');
+    const known = before.events.some(
+      (event) =>
+        event.type === 'visualization.runtime-failed' &&
+        event.payload.presentationId === options.presentationId &&
+        event.payload.message === options.message
+    );
+    if (known) return commandResult(before, before);
+    const document = await appendProjectEvents(
+      before,
+      [
+        draftEvent({
+          type: 'visualization.runtime-failed',
+          actor: { kind: 'system' },
+          operationId: options.operationId,
+          payload: {
+            presentationId: options.presentationId,
+            message: options.message,
+            ...(options.step === undefined ? {} : { step: options.step })
+          }
+        })
+      ],
+      dependencies
+    );
+    return commandResult(before, document);
+  });
+}
+
 /** Append a user-authored project title change. */
 export function renameProject(
   options: {
