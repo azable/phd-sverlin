@@ -47,8 +47,46 @@ function unitOf(typeName: string): string | undefined {
   return undefined;
 }
 
-// The mounted app, unless the view failed to mount, in which case the layer holds a notice instead.
-type Shown = { step: number; layer: HTMLElement; app?: Record<string, unknown> };
+// The mounted app, unless the view failed to mount, in which case the layer holds a notice instead,
+// with how many times its layout changed before settling, for timing reports.
+type Shown = { step: number; layer: HTMLElement; app?: Record<string, unknown>; changes: number };
+
+/**
+ * Report how long laying out takes, so the app can log it: each pass's phase, step, duration, and
+ * layout changes, a pass still waiting to settle, and the time until the first step is shown.
+ */
+type Timing = {
+  phase: Phase | 'ready' | 'shown';
+  step?: number;
+  ms: number;
+  changes?: number;
+  waiting?: boolean;
+  waitedFor?: 'size' | 'visibility';
+};
+const pageStarted = performance.now();
+function reportTiming(timing: Timing) {
+  if (window.parent !== window)
+    window.parent.postMessage({ type: 'sverlin:timing', ...timing }, '*');
+}
+/**
+ * Time one pass: `done` reports it once settled, and until then it is reported every two seconds
+ * as waiting; `cancel` stops that for a pass replaced before it settled.
+ */
+function timePass(phase: Phase, step: number, shown: () => Shown | undefined) {
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
+  const waiting = setInterval(
+    () => reportTiming({ phase, step, ms: elapsed(), changes: shown()?.changes, waiting: true }),
+    2000
+  );
+  return {
+    done() {
+      clearInterval(waiting);
+      reportTiming({ phase, step, ms: elapsed(), changes: shown()?.changes });
+    },
+    cancel: () => clearInterval(waiting)
+  };
+}
 const root = document.getElementById('app') ?? document.body;
 let current: Shown | undefined;
 let pending: Shown | undefined;
@@ -82,7 +120,7 @@ function mountStep(step: number, phase: Phase, settled: (shown: Shown) => void):
   const layer = document.createElement('div');
   layer.className = 'sv-layer pending';
   root.append(layer);
-  const shown: Shown = { step, layer };
+  const shown: Shown = { step, layer, changes: 0 };
   const memory: LayoutMemory = {
     step,
     recording: phase === 'recording',
@@ -98,7 +136,8 @@ function mountStep(step: number, phase: Phase, settled: (shown: Shown) => void):
         view: Main as Component<Record<string, unknown>>,
         props: { ...state, step, seed: playback.__sverlinSeed ?? 1 },
         settings: frame,
-        onsettled: () => settled(shown)
+        onsettled: () => settled(shown),
+        onchanged: () => shown.changes++
       },
       context: new Map<string, unknown>([
         ['sverlin:defaults', defaults],
@@ -164,14 +203,20 @@ function remove(shown: Shown) {
  * Show a step from the records: mount it in a hidden layer, and once its layout settles, reveal it
  * and remove the step it replaces, so neither a blank page nor an unfinished layout is ever visible.
  */
+let pendingTiming: ReturnType<typeof timePass> | undefined;
 function show(step: number) {
   if (pending) remove(pending);
-  pending = mountStep(step, 'showing', (shown) => {
+  pendingTiming?.cancel();
+  let mounted: Shown | undefined;
+  const timed = (pendingTiming = timePass('showing', step, () => mounted));
+  pending = mounted = mountStep(step, 'showing', (shown) => {
     if (pending !== shown) return;
+    timed.done();
     shown.layer.classList.remove('pending');
     if (current) remove(current);
     current = shown;
     // The first step shown means the page is ready, so the app can take its loader away.
+    if (!ready) reportTiming({ phase: 'ready', ms: Math.round(performance.now() - pageStarted) });
     if (!ready && window.parent !== window)
       window.parent.postMessage({ type: 'sverlin:ready' }, '*');
     ready = true;
@@ -184,10 +229,18 @@ function show(step: number) {
  * background tab, has no animation frames and throttled timers, so each layout pass would crawl.
  * A sandboxed frame can also start before its size arrives, and the browser does not always fire
  * resize when that first size is applied, so the size is observed instead: an observer reports a
- * size as soon as it is no longer zero.
+ * size as soon as it is no longer zero. How long it waited, and for what, is reported.
  */
 async function whenShown() {
-  while (document.visibilityState !== 'visible' || !document.documentElement.clientWidth)
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
+  let waitedFor: 'size' | 'visibility' | undefined;
+  while (document.visibilityState !== 'visible' || !document.documentElement.clientWidth) {
+    // Reported once as it starts, so a page that never shows says what it waits for.
+    if (!waitedFor) {
+      waitedFor = document.visibilityState !== 'visible' ? 'visibility' : 'size';
+      reportTiming({ phase: 'shown', ms: 0, waitedFor, waiting: true });
+    }
     await new Promise<void>((resume) => {
       const observer = new ResizeObserver(() => done());
       function done() {
@@ -198,6 +251,8 @@ async function whenShown() {
       observer.observe(document.documentElement);
       document.addEventListener('visibilitychange', done);
     });
+  }
+  if (waitedFor) reportTiming({ phase: 'shown', ms: elapsed(), waitedFor });
 }
 
 /**
@@ -207,13 +262,16 @@ async function whenShown() {
 async function recordSteps() {
   const pass = async (step: number, phase: Phase, finish: (shown: Shown) => void) => {
     await whenShown();
-    await new Promise<void>((done) =>
-      mountStep(step, phase, (shown) => {
+    let mounted: Shown | undefined;
+    const timed = timePass(phase, step, () => mounted);
+    await new Promise<void>((done) => {
+      mounted = mountStep(step, phase, (shown) => {
+        timed.done();
         finish(shown);
         remove(shown);
         done();
-      })
-    );
+      });
+    });
   };
   for (let step = 0; step < states.length; step++)
     await pass(step, 'measuring', ({ layer }) => {

@@ -292,6 +292,7 @@
             onViewChange={(view) => onViewChange(presentationId, view)}
             onRuntimeError={(failure) =>
               session.reportRuntimeFailure({ presentationId, ...failure })}
+            onLoadTiming={(timing) => session.reportLoadTiming(timing)}
           />
         </div>
       </div>

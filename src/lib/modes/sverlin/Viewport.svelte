@@ -7,6 +7,10 @@
   import { sandboxDocument, type CanvasView } from '../sandbox';
   import type { SelectedElement } from '$lib/client/visualization/visual-selection.svelte';
   import type { BrowserBundlePresentation } from '$lib/shared/presentations';
+  import {
+    layoutPassSchema,
+    type PresentationLoadTiming
+  } from '$lib/shared/presentation-load-timing';
   import { selectedElementSchema } from '$lib/shared/projects/events/message-content';
 
   let {
@@ -16,7 +20,8 @@
     selection = [],
     onSelectionChange = () => {},
     onViewChange = () => {},
-    onRuntimeError = () => {}
+    onRuntimeError = () => {},
+    onLoadTiming = () => {}
   }: {
     presentation: BrowserBundlePresentation;
     step: number;
@@ -28,6 +33,8 @@
     onViewChange?: (view: CanvasView) => void;
     /** The view's own code failed as it drew a step (or, without a step, at some other moment). */
     onRuntimeError?: (failure: { step?: number; message: string }) => void;
+    /** How long the page took to show its first step, or that it had not after a while. */
+    onLoadTiming?: (timing: PresentationLoadTiming) => void;
   } = $props();
 
   let iframe = $state<HTMLIFrameElement>();
@@ -84,14 +91,95 @@
     failure = undefined;
   });
 
+  // Load timing, for auditing and debugging slow or stuck loads: when this presentation's page
+  // started loading here, each layout pass the page reports, and the outcome, logged to the console
+  // as [sverlin] and reported once ready, or as stalled when not ready after a while.
+  // A plain object schema drops the message's type, keeping only the pass.
+  const timingMessage = v.object(layoutPassSchema.entries);
+  type Pass = v.InferOutput<typeof layoutPassSchema>;
+  let passes: Pass[] = [];
+  let loadStarted = 0;
+  let loadedAt: number | undefined;
+  let frameAtLoad: PresentationLoadTiming['frameAtLoad'];
+  /** Where the frame is on screen, to tell a zero-sized or off-screen frame from a slow page. */
+  function frameBox(): PresentationLoadTiming['frameAtLoad'] {
+    const box = iframe?.getBoundingClientRect();
+    if (!box) return undefined;
+    const round = (value: number) => Math.max(-100_000, Math.min(100_000, Math.round(value)));
+    return {
+      width: round(box.width),
+      height: round(box.height),
+      top: round(box.top),
+      left: round(box.left)
+    };
+  }
+  const logName = () => `[sverlin] ${label} (${presentation.presentationId.slice(0, 8)})`;
+  const sinceLoad = () => Math.round(performance.now() - loadStarted);
+  function loadTiming(outcome: PresentationLoadTiming['outcome']): PresentationLoadTiming {
+    const settled = passes.filter(({ waiting }) => !waiting);
+    const total = (phase: Pass['phase']) =>
+      settled.filter((pass) => pass.phase === phase).reduce((sum, { ms }) => sum + ms, 0);
+    const last = passes.at(-1);
+    const pageMs = settled.find(({ phase }) => phase === 'ready')?.ms;
+    const shown = settled.find(({ phase }) => phase === 'shown');
+    return {
+      presentationId: presentation.presentationId,
+      outcome,
+      sinceLoadMs: sinceLoad(),
+      ...(pageMs === undefined ? {} : { pageMs }),
+      ...(loadedAt === undefined ? {} : { loadedMs: loadedAt }),
+      measuringMs: total('measuring'),
+      recordingMs: total('recording'),
+      showingMs: total('showing'),
+      passes: settled.filter(({ phase }) => phase !== 'ready' && phase !== 'shown').length,
+      ...(shown?.waitedFor ? { shownWait: { ms: shown.ms, waitedFor: shown.waitedFor } } : {}),
+      mostChanges: Math.max(0, ...passes.map(({ changes }) => changes ?? 0)),
+      visibility: globalThis.document.visibilityState === 'visible' ? 'visible' : 'hidden',
+      ...(frameAtLoad ? { frameAtLoad } : {}),
+      ...(iframe ? { frameAtOutcome: frameBox() } : {}),
+      ...(last ? { last } : {})
+    };
+  }
+  // Ten seconds is far beyond a normal load, about a third of a second for a six-step linked list.
+  const stalledAfterMs = 10_000;
+  $effect(() => {
+    void document;
+    passes = [];
+    loadStarted = performance.now();
+    loadedAt = undefined;
+    frameAtLoad = undefined;
+    const watchdog = setTimeout(() => {
+      if (untrack(() => ready)) return;
+      const timing = loadTiming('stalled');
+      console.warn(`${logName()} not ready after ${timing.sinceLoadMs} ms`, timing);
+      onLoadTiming(timing);
+    }, stalledAfterMs);
+    return () => clearTimeout(watchdog);
+  });
+
   $effect(() => {
     const receive = (event: MessageEvent) => {
       if (!iframe || event.source !== iframe.contentWindow) return;
       const data = event.data as { type?: unknown; reportsReady?: unknown } & Partial<
         Record<keyof CanvasView, unknown>
       >;
+      if (data?.type === 'sverlin:timing') {
+        const parsed = v.safeParse(timingMessage, data);
+        if (!parsed.success) return;
+        const pass = parsed.output;
+        passes.push(pass);
+        if (pass.waiting)
+          console.warn(
+            pass.phase === 'shown'
+              ? `${logName()} waiting for its ${pass.waitedFor} before laying out`
+              : `${logName()} still ${pass.phase} step ${pass.step} after ${pass.ms} ms, ${pass.changes ?? 0} layout changes`
+          );
+        return;
+      }
       if (data?.type === 'sverlin:loaded') {
         loaded = true;
+        loadedAt = sinceLoad();
+        frameAtLoad = frameBox();
         // Presentations built before pages reported readiness never say so; stop waiting for them.
         // Newer pages always report it, however long laying out their steps takes.
         if (data.reportsReady === true) return;
@@ -103,6 +191,9 @@
       }
       if (data?.type === 'sverlin:ready') {
         ready = true;
+        const timing = loadTiming('ready');
+        console.info(`${logName()} ready ${timing.sinceLoadMs} ms after loading began`, timing);
+        onLoadTiming(timing);
         return;
       }
       if (data?.type === 'sverlin:error') {

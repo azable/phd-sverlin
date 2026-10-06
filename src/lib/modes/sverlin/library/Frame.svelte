@@ -32,7 +32,8 @@
     view: View,
     props,
     settings,
-    onsettled
+    onsettled,
+    onchanged
   }: {
     /** The authored view. */
     view: Component<Record<string, unknown>>;
@@ -41,6 +42,8 @@
     settings: FrameSettings;
     /** Called once the layout has stopped changing, so the page can be shown finished. */
     onsettled?: () => void;
+    /** Called whenever the layout changes before it settles, so the page can report progress. */
+    onchanged?: () => void;
   } = $props();
 
   provideNodeIds();
@@ -97,6 +100,7 @@
         };
       }
       layoutRevision++;
+      if (!settled) onchanged?.();
       scheduleSettle();
     });
   }

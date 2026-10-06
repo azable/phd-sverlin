@@ -4,6 +4,7 @@
   import { modeCatalog } from '$lib/modes/catalog';
   import type { SelectedElement } from './visual-selection.svelte';
   import type { CanvasView } from '$lib/modes/sandbox';
+  import type { PresentationLoadTiming } from '$lib/shared/presentation-load-timing';
   import {
     presentationMode,
     type RenderablePresentation,
@@ -20,6 +21,8 @@
     onViewChange?: (view: CanvasView) => void;
     /** The presentation's own code failed as it drew, in modes that run authored code. */
     onRuntimeError?: (failure: { step?: number; message: string }) => void;
+    /** How long the presentation took to appear, in modes that report it. */
+    onLoadTiming?: (timing: PresentationLoadTiming) => void;
   };
 
   let {
@@ -29,7 +32,8 @@
     selection,
     onSelectionChange,
     onViewChange,
-    onRuntimeError
+    onRuntimeError,
+    onLoadTiming
   }: Omit<ViewportProps, 'presentation'> & { presentation?: RenderablePresentation } = $props();
   const viewports = import.meta.glob<{
     default: Component<ViewportProps>;
@@ -54,6 +58,7 @@
       {onSelectionChange}
       {onViewChange}
       {onRuntimeError}
+      {onLoadTiming}
     />
   {:else}
     <div class="flex min-h-full items-center justify-center p-6">

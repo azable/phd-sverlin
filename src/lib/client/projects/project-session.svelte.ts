@@ -24,6 +24,7 @@ import {
   type ProjectSummary,
   type WorkspaceResource
 } from '$lib/shared/projects/model';
+import type { PresentationLoadTiming } from '$lib/shared/presentation-load-timing';
 import { defaultProjectCreation, type ProjectCreation } from '$lib/shared/projects/creation';
 import { projectSnapshotAt, summarizeProject } from '$lib/shared/projects/projection';
 import {
@@ -302,6 +303,21 @@ export class ProjectSession {
         this.#submitting = null;
       }
     }
+  }
+
+  /**
+   * Send how long a presentation took to appear to the server's log, for auditing load times. It is
+   * fire-and-forget and outside the Timeline, so it never delays or conflicts with commands.
+   */
+  reportLoadTiming(timing: PresentationLoadTiming): void {
+    void fetch(`/api/projects/${encodeURIComponent(this.projectId)}/load-timings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(timing),
+      keepalive: true
+    }).catch(() => {
+      // A lost timing report only loses a log line.
+    });
   }
 
   /**
