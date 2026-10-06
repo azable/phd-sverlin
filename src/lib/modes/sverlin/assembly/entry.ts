@@ -180,21 +180,41 @@ function show(step: number) {
 }
 
 /**
+ * Wait until the page is shown and has a size. A hidden page, such as one in a covered window or a
+ * background tab, has no animation frames and throttled timers, so each layout pass would crawl.
+ * A sandboxed frame can also start before its size arrives, and the browser does not always fire
+ * resize when that first size is applied, so the size is observed instead: an observer reports a
+ * size as soon as it is no longer zero.
+ */
+async function whenShown() {
+  while (document.visibilityState !== 'visible' || !document.documentElement.clientWidth)
+    await new Promise<void>((resume) => {
+      const observer = new ResizeObserver(() => done());
+      function done() {
+        observer.disconnect();
+        document.removeEventListener('visibilitychange', done);
+        resume();
+      }
+      observer.observe(document.documentElement);
+      document.addEventListener('visibilitychange', done);
+    });
+}
+
+/**
  * Measure every node at every step, keeping the largest size each reaches, then record what every
  * arrangement contains at every step and solve each once over all of them.
  */
 async function recordSteps() {
-  // A page loaded while hidden has no layout to measure until it is shown.
-  while (!document.documentElement.clientWidth)
-    await new Promise((resume) => addEventListener('resize', resume, { once: true }));
-  const pass = (step: number, phase: Phase, finish: (shown: Shown) => void) =>
-    new Promise<void>((done) =>
+  const pass = async (step: number, phase: Phase, finish: (shown: Shown) => void) => {
+    await whenShown();
+    await new Promise<void>((done) =>
       mountStep(step, phase, (shown) => {
         finish(shown);
         remove(shown);
         done();
       })
     );
+  };
   for (let step = 0; step < states.length; step++)
     await pass(step, 'measuring', ({ layer }) => {
       for (const node of layer.querySelectorAll<HTMLElement>('[data-sv-node]')) {
