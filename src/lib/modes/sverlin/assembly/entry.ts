@@ -234,7 +234,10 @@ addEventListener('message', (event: MessageEvent) => {
   if (recorded && step !== (pending ?? current)?.step) show(step);
 });
 
-if (window.parent !== window) window.parent.postMessage({ type: 'sverlin:loaded' }, '*');
+// The page says it will report when its first step is shown, however long laying out every step
+// takes, so the app keeps its loader up until then.
+if (window.parent !== window)
+  window.parent.postMessage({ type: 'sverlin:loaded', reportsReady: true }, '*');
 void recordSteps().then(() => {
   recorded = true;
   show(requested);

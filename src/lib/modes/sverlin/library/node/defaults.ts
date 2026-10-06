@@ -9,17 +9,19 @@ import type {
   Align,
   FrameLayout,
   Justify,
+  MinSize,
   NodeDefaults,
   NodeFont,
+  NodeShape,
   Radius,
   ShapeDefaults,
   Spacing,
-  StrokeWidth
+  StrokeWidth,
+  Weight
 } from './props';
 
-/** Choose one of a list of options. */
 /** Options drawn evenly, or in proportion to their weights when given. */
-type Choice = { pick: readonly string[]; weights?: readonly number[] };
+type Choice = { pick: readonly (string | number)[]; weights?: readonly number[] };
 
 /**
  * A pale surface tint and a matching border, drawn in HSL. Low saturation and high lightness keep
@@ -50,6 +52,10 @@ export const defaultsPolicy = {
   'box.strokeWidth': { pick: ['none', 'thin', 'thick'] },
   'box.padding': { pick: ['small', 'medium'] },
   'box.tint': tint,
+  // A cell's least size, and its text's size (in em, around the preset 1.25) and weight.
+  'box.minSize': { pick: ['small', 'medium', 'large'] },
+  'box.scale': { pick: [1.1, 1.25, 1.4] },
+  'box.weight': { pick: ['bold', 'normal'], weights: [2, 1] },
   'card.radius': { pick: ['small', 'medium'] },
   'card.strokeWidth': { pick: ['none', 'thin', 'thick'] },
   'card.padding': { pick: ['small', 'medium', 'large'] },
@@ -60,8 +66,15 @@ export const defaultsPolicy = {
   // A column of top-level nodes, or now and then a free arrangement that differs with every seed:
   // free top-level layouts seldom read as well as a column.
   'frame.layout': { pick: ['column', 'free'], weights: [9, 1] },
+  // Now and then a collection is drawn as a card around its items rather than bare.
+  'collection.shape': { pick: ['plain', 'card'], weights: [3, 1] },
+  // How rows and columns line their items up across their direction, where a node leaves it unset.
+  'row.align': { pick: ['start', 'center'] },
+  'column.align': { pick: ['center', 'start'], weights: [3, 1] },
   gap: { pick: ['small', 'medium', 'large'] },
-  font: { pick: ['sans', 'serif', 'mono'] }
+  font: { pick: ['sans', 'serif', 'mono'] },
+  // Link widths in pixels, from a fine line to a firm one.
+  'link.strokeWidth': { pick: [1.5, 2, 3] }
 } satisfies Record<string, Choice | TintRange>;
 
 /**
@@ -96,14 +109,22 @@ export function drawDefaults(random: (key: string) => number): NodeDefaults {
     ...drawTint(`${name}.tint`, defaultsPolicy[`${name}.tint`])
   });
   return {
-    box: shape('box'),
+    box: {
+      ...shape('box'),
+      minSize: choose('box.minSize') as MinSize,
+      scale: choose('box.scale') as number,
+      weight: choose('box.weight') as Weight
+    },
     card: shape('card'),
     frame: {
       justify: choose('frame.justify') as Justify,
       align: choose('frame.align') as Align,
       layout: choose('frame.layout') as FrameLayout
     },
+    collection: { shape: choose('collection.shape') as NodeShape },
+    align: { row: choose('row.align') as Align, column: choose('column.align') as Align },
     gap: choose('gap') as Spacing,
-    font: choose('font') as NodeFont
+    font: choose('font') as NodeFont,
+    link: { strokeWidth: choose('link.strokeWidth') as number }
   };
 }

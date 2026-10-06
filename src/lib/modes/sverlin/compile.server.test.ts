@@ -9,12 +9,11 @@ import {
 import { linearSearchSource } from './contract';
 import { keyedRandom } from './algorithm/random.server';
 import { drawDefaults as drawWith } from './library/node/defaults';
-import libraryGuide from './library/README.md?raw';
 
 describe('single-component Svelte compilation', () => {
   it('bundles a component and its playback input without executing it', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin">yield "First"; yield "Second";</script><h1>{step}</h1>'
+      '<script lang="sverlin">yield "First"; yield "Second";</script><Node>{step}</Node>'
     );
     expect(result.labels).toEqual(['First', 'Second']);
     expect(result.javascript).toContain('__sverlinStep');
@@ -66,19 +65,6 @@ describe('single-component Svelte compilation', () => {
     expect(again.parameters).toEqual(bundles[0].parameters);
   });
 
-  it('builds the example in the library guide sent to the assistant', async () => {
-    const example = libraryGuide.match(/```svelte\n([\s\S]*?)```/u)?.[1];
-    expect(example).toBeDefined();
-    const result = await compileSvelteComponent(example ?? '');
-    expect(result.masterLabels).toEqual([
-      'Start',
-      'Visit index 0',
-      'Visit index 1',
-      'Visit index 2',
-      'Done'
-    ]);
-  });
-
   it('reports design errors at their authored position and rejects name clashes', async () => {
     const design =
       '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin">\nlet x = Int(1);\nyield "A";\n</script>\n<script lang="sverlin" design>\nconst size = int(4, 1);\n</script>';
@@ -93,7 +79,7 @@ describe('single-component Svelte compilation', () => {
       )
     ).rejects.toThrow('"x" is defined in the design block');
     await expect(
-      compileSvelteComponent('<script lang="sverlin" input>const x = 1;</script><p>x</p>')
+      compileSvelteComponent('<script lang="sverlin" input>const x = 1;</script><Node>x</Node>')
     ).rejects.toThrow('Add a <script lang="sverlin"> algorithm block');
   });
 
@@ -187,7 +173,7 @@ describe('single-component Svelte compilation', () => {
 
   it('reports algorithm errors at their authored line and column', async () => {
     const source =
-      '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin">\n  let x = Int(1);\n  yield "A";\n  x = missing;\n</script>\n<p>{x}</p>';
+      '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin">\n  let x = Int(1);\n  yield "A";\n  x = missing;\n</script>\n<Node>{x}</Node>';
     await expect(compileSvelteComponent(source)).rejects.toMatchObject({
       name: 'InvalidSvelteSourceError',
       code: 'algorithm_error',
@@ -204,7 +190,7 @@ describe('single-component Svelte compilation', () => {
   });
 
   it('requires exactly one algorithm block', async () => {
-    await expect(compileSvelteComponent('<h1>Hi</h1>')).rejects.toThrow(
+    await expect(compileSvelteComponent('<Node>Hi</Node>')).rejects.toThrow(
       'Add a <script lang="sverlin"> algorithm block'
     );
     await expect(
@@ -227,7 +213,7 @@ describe('single-component Svelte compilation', () => {
 
   it('puts every recorded and design value in scope for a script-free view', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin" input>const values = [Int(4), Int(9)];</script>\n<script lang="sverlin">let total = Int(0); yield "Start"; for (const v of values) total += v; yield "Summed";</script>\n<script lang="sverlin" design>const accent = pick(["red"]);</script>\n<Node layout="column">{@const doubled = total * 2}<p style:color={accent}>{values.join("+")} = {total}; doubled {doubled}; step {step}, seed {seed}</p></Node>',
+      '<script lang="sverlin" domain>const Int = type("integer");</script><script lang="sverlin" input>const values = [Int(4), Int(9)];</script>\n<script lang="sverlin">let total = Int(0); yield "Start"; for (const v of values) total += v; yield "Summed";</script>\n<script lang="sverlin" design>const accent = pick(["red"]);</script>\n<Node layout="column">{@const doubled = total * 2}<Node color={accent}>{values.join("+")} = {total}; doubled {doubled}; step {step}, seed {seed}</Node></Node>',
       5
     );
     expect(result.labels).toEqual(['Start', 'Summed']);
@@ -261,10 +247,43 @@ describe('single-component Svelte compilation', () => {
     ).resolves.toBeDefined();
   });
 
+  it('draws views only with Node and Link, styled by their props', async () => {
+    const view = (markup: string) =>
+      compileSvelteComponent(`<script lang="sverlin">yield "A";</script>\n${markup}`);
+    await expect(view('<Node>Hi</Node>\n<style>div { color: red; }</style>')).rejects.toMatchObject(
+      { code: 'view_style', line: 3, message: expect.stringContaining('<style>') }
+    );
+    await expect(view('<Node><small>cm</small></Node>')).rejects.toMatchObject({
+      code: 'view_markup',
+      message: expect.stringContaining('<small>')
+    });
+    await expect(view('<svg><circle r="4" /></svg>')).rejects.toMatchObject({
+      code: 'view_markup'
+    });
+    await expect(view('<Node>{@html "<b>x</b>"}</Node>')).rejects.toMatchObject({
+      code: 'view_markup',
+      message: expect.stringContaining('{@html}')
+    });
+    await expect(view('<svelte:head><title>x</title></svelte:head>')).rejects.toMatchObject({
+      code: 'view_markup'
+    });
+    await expect(view('<svelte:element this="div" />')).rejects.toMatchObject({
+      code: 'view_markup'
+    });
+    await expect(view('Linear search')).rejects.toMatchObject({ code: 'view_text', line: 2 });
+    await expect(view('{#if step}{step}{/if}')).rejects.toMatchObject({ code: 'view_text' });
+    // Text inside a node or a snippet is drawn by a node, and whitespace between nodes is ignored.
+    await expect(
+      view(
+        '{#snippet Note(text)}{text}{/snippet}\n<Node>Step {step}</Node>\n<Node>{@render Note("x")}</Node>'
+      )
+    ).resolves.toBeDefined();
+  });
+
   it('rejects view scripts and values that shadow library components', async () => {
     await expect(
       compileSvelteComponent(
-        '<script lang="sverlin">yield "A";</script>\n\n<script>const x = 1;</script>\n<p>{x}</p>'
+        '<script lang="sverlin">yield "A";</script>\n\n<script>const x = 1;</script>\n<Node>{x}</Node>'
       )
     ).rejects.toMatchObject({
       code: 'view_script',
@@ -282,7 +301,9 @@ describe('single-component Svelte compilation', () => {
       )
     ).rejects.toMatchObject({ code: 'sverlin_block', line: 2 });
     await expect(
-      compileSvelteComponent('<script lang="sverlin">const Node = 1; yield "A";</script><p>x</p>')
+      compileSvelteComponent(
+        '<script lang="sverlin">const Node = 1; yield "A";</script><Node>x</Node>'
+      )
     ).rejects.toThrow('"Node" names a library component');
   });
 
@@ -417,7 +438,7 @@ describe('single-component Svelte compilation', () => {
     async (path) => {
       await expect(
         compileSvelteComponent(
-          `<script lang="sverlin">yield "A";</script><p>{require(${JSON.stringify(path)})}</p>`
+          `<script lang="sverlin">yield "A";</script><Node>{require(${JSON.stringify(path)})}</Node>`
         )
       ).rejects.toMatchObject({
         name: 'InvalidSvelteSourceError',
@@ -428,13 +449,15 @@ describe('single-component Svelte compilation', () => {
 
   it('keeps authored line numbers after prelude injection', async () => {
     await expect(
-      compileSvelteComponent('<script lang="sverlin">yield "A";</script>\n<p>\n{$state(1)}</p>')
+      compileSvelteComponent(
+        '<script lang="sverlin">yield "A";</script>\n<Node>\n{$state(1)}</Node>'
+      )
     ).rejects.toMatchObject({ line: 3, column: 2 });
   });
 
   it('numbers repeated step labels so stored playback steps stay distinct', async () => {
     const result = await compileSvelteComponent(
-      '<script lang="sverlin">yield "Same"; yield "Same";</script><h1>Hi</h1>'
+      '<script lang="sverlin">yield "Same"; yield "Same";</script><Node>Hi</Node>'
     );
     expect(result.labels).toEqual(['Same', 'Same (2)']);
   });

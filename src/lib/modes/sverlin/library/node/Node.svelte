@@ -205,7 +205,9 @@
   const unit = $derived(type ? types?.unit(type) : undefined);
 
   const collection = $derived(items !== undefined);
-  const resolvedShape = $derived(shape ?? (collection || children ? 'plain' : 'box'));
+  const resolvedShape = $derived(
+    shape ?? (collection ? (drawn?.collection.shape ?? 'plain') : children ? 'plain' : 'box')
+  );
   // Links need positions to join, so a node with links and no layout is laid out freely.
   const arrangement = $derived(layout ?? (collection ? 'row' : __links ? 'free' : undefined));
   const preset = $derived.by(() => {
@@ -245,7 +247,11 @@
   const gridColumns = $derived(
     columns ?? Math.max(1, Math.ceil(Math.sqrt(items?.length ?? (arrangement === 'grid' ? 4 : 1))))
   );
-  const alignment = $derived(alignments[align ?? (arrangement === 'column' ? 'center' : 'start')]);
+  const resolvedAlign = $derived(
+    align ??
+      (arrangement === 'column' ? (drawn?.align.column ?? 'center') : (drawn?.align.row ?? 'start'))
+  );
+  const alignment = $derived(alignments[resolvedAlign]);
   const justification = $derived(justifications[justify ?? 'start']);
   // Free layouts, and rows or columns with links or relations, are placed by constraint layout;
   // other arrangements are CSS flex and grid, which solve the same constraints in the browser.
@@ -264,7 +270,7 @@
       {#if item}
         {@render item(child, index, types?.itemType(items, index))}
       {:else if Array.isArray(child)}
-        <Node items={child} layout={nested} __id={id && `${id}/${index}`} />
+        <Node items={child} layout={nested} shape="plain" __id={id && `${id}/${index}`} />
       {:else}
         <Node
           value={child !== null && typeof child === 'object'
@@ -310,7 +316,7 @@
     {#if solved}
       <Arranged
         template={solved}
-        align={align ?? (arrangement === 'column' ? 'center' : 'start')}
+        align={resolvedAlign}
         {constraints}
         {flow}
         {form}
@@ -324,9 +330,15 @@
     {:else if arrangement}
       <div
         class="items {arrangement}"
+        class:uniform={collection}
         style:--sv-columns={gridColumns}
         style:gap={measure(spacings, gap ?? drawn?.gap ?? 'medium')}
-        style:align-items={alignment}
+        style:align-items={collection && arrangement === 'column' ? 'center' : alignment}
+        style:justify-items={collection
+          ? arrangement === 'column'
+            ? alignment
+            : 'center'
+          : undefined}
         style:justify-content={justification}
       >
         {@render contents()}
@@ -380,11 +392,27 @@
   .column {
     flex-direction: column;
   }
-  .wrap {
-    flex-flow: row wrap;
-  }
   .grid {
     display: grid;
     grid-template-columns: repeat(var(--sv-columns), max-content);
+  }
+  /*
+    A collection's items sit on equal tracks, each as large as the largest item, so the items of a
+    sequence are evenly spaced however their labels differ; each item keeps its own size, centred
+    in its track along the layout direction.
+  */
+  .uniform {
+    display: grid;
+  }
+  .uniform.row {
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+  }
+  .uniform.column {
+    grid-auto-rows: 1fr;
+  }
+  .uniform.grid {
+    grid-template-columns: repeat(var(--sv-columns), 1fr);
+    grid-auto-rows: 1fr;
   }
 </style>

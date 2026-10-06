@@ -5,7 +5,7 @@ export const sverlinStarter = {
   language: 'svelte',
   mediaType: 'text/x-svelte',
   source:
-    '<script lang="sverlin">\n  yield "Start";\n</script>\n<main><h1>Start your visualization</h1><p>Step {step + 1} · seed {seed}</p></main>\n'
+    '<script lang="sverlin">\n  yield "Start";\n</script>\n<Node size="xlarge" weight="bold">Start your visualization</Node>\n<Node color="neutral">Step {step + 1} · seed {seed}</Node>\n'
 } as const;
 
 /** A small self-contained algorithm example for administrator projects. */
@@ -34,7 +34,7 @@ export const linearSearchSource = `<script lang="sverlin" domain>
 </script>
 <script lang="sverlin" design>
   // Layout of the array.
-  const flow = pick(['row', 'column', 'wrap']);
+  const flow = pick(['row', 'column']);
   const spacing = pick(['small', 'medium', 'large']);
   // How every Int cell is drawn, through the Int renderer below.
   const cellRadius = pick(['small', 'medium', 'full']);

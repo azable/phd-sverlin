@@ -19,7 +19,8 @@ describe('Svelte-backed project lifecycle', () => {
     const { document: created } = await createProjectSkeleton({}, dependencies);
     const artifact = projectSnapshotAt(created).artifacts.main;
     expect(artifact.path).toBe('Main.svelte');
-    const source = '<script lang="sverlin">yield "First"; yield "Second";</script><h1>{step}</h1>';
+    const source =
+      '<script lang="sverlin">yield "First"; yield "Second";</script><Node>{step}</Node>';
     const result = await updateProjectArtifact(
       {
         projectId: created.projectId,

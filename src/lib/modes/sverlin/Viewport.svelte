@@ -87,10 +87,14 @@
   $effect(() => {
     const receive = (event: MessageEvent) => {
       if (!iframe || event.source !== iframe.contentWindow) return;
-      const data = event.data as { type?: unknown } & Partial<Record<keyof CanvasView, unknown>>;
+      const data = event.data as { type?: unknown; reportsReady?: unknown } & Partial<
+        Record<keyof CanvasView, unknown>
+      >;
       if (data?.type === 'sverlin:loaded') {
         loaded = true;
         // Presentations built before pages reported readiness never say so; stop waiting for them.
+        // Newer pages always report it, however long laying out their steps takes.
+        if (data.reportsReady === true) return;
         const waiting = document;
         setTimeout(() => {
           if (document === waiting) ready = true;

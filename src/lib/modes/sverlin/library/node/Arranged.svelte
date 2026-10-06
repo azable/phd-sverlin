@@ -9,6 +9,7 @@
 
   import {
     arrangementParentContext,
+    defaultsContext,
     layoutMemoryContext,
     provideArrangementParent,
     seedContext
@@ -61,13 +62,16 @@
   type LinkStyle = { dashed: boolean; label?: string; stroke?: string; strokeWidth?: string };
   const colourOf = (style?: LinkStyle) =>
     style?.stroke ? (paletteColor(style.stroke, 'stroke') ?? 'var(--sv-muted)') : 'var(--sv-muted)';
+  // Unset, a link takes the presentation's drawn width, or a fine line when defaults are fixed.
+  const drawn = defaultsContext();
+  const fine = `${drawn?.link.strokeWidth ?? 1.5}px`;
   const widthOf = (style?: LinkStyle) => {
     const width = style?.strokeWidth;
-    if (!width) return '1.5px';
+    if (!width) return fine;
     const pixels = Number(width);
     return Number.isFinite(pixels)
       ? `${Math.min(Math.max(pixels, 0.5), 12)}px`
-      : (strokeWidths[width as keyof typeof strokeWidths] ?? '1.5px');
+      : (strokeWidths[width as keyof typeof strokeWidths] ?? fine);
   };
 
   const seed = seedContext();

@@ -478,10 +478,10 @@ function possibleValues(
   }
 }
 
-const layouts = ['row', 'column', 'wrap', 'grid', 'free'];
+const layouts = ['row', 'column', 'grid', 'free'];
 const named = (scale: object, numeric = true) => ({ names: Object.keys(scale), numeric });
 /** The props each library component takes, with the names a prop's text value can be, if limited. */
-const libraryProps: Record<
+export const libraryProps: Record<
   'Node' | 'Link',
   Record<string, { names: string[]; numeric: boolean } | null>
 > = {
@@ -593,6 +593,20 @@ function checkProps(
   }
 }
 
+/** Template markup other than <Node> and <Link> that a view cannot use, by its parsed type. */
+const unsupportedMarkup: Record<string, string> = {
+  RawMustacheTag: '{@html}',
+  DebugTag: '{@debug}',
+  Head: '<svelte:head>',
+  Title: '<title>',
+  Window: '<svelte:window>',
+  Document: '<svelte:document>',
+  Body: '<svelte:body>',
+  Options: '<svelte:options>',
+  Slot: '<slot>',
+  SlotTemplate: '<svelte:fragment>'
+};
+
 /**
  * Tag every <Node> and <Link> in the view with the line and column (both from 1) of its tag in the
  * authored source, as the hidden prop __ref, so a rendered node or link can be traced back to the
@@ -601,7 +615,7 @@ function checkProps(
  */
 function withNodeRefs(
   svelteSource: string,
-  ast: { html?: unknown },
+  ast: { html?: unknown; css?: { start: number } | null },
   source: string,
   choices: Record<string, DesignChoices>
 ): { tagged: string; topLevelLinks: boolean; problems: InvalidSvelteSourceError[] } {
@@ -614,15 +628,41 @@ function withNodeRefs(
   };
   const tags: { start: number; name: string; links: boolean }[] = [];
   let topLevelLinks = false;
-  // Each <Link> belongs to the nearest <Node> around it, which then lays out with links.
-  const walk = (value: unknown, around: { links: boolean } | undefined): void => {
+  const reject = (message: string, code: string, start: number | undefined) =>
+    problems.push(
+      new InvalidSvelteSourceError(message, { code, start: sourcePosition(source, start ?? 0) })
+    );
+  // Each <Link> belongs to the nearest <Node> around it, which then lays out with links. Text
+  // belongs inside a node or a snippet, where a node draws it, so participants can select it.
+  const walk = (value: unknown, around: { links: boolean } | undefined, inNode: boolean): void => {
     if (!value || typeof value !== 'object') return;
     if (Array.isArray(value)) {
-      for (const part of value) walk(part, around);
+      for (const part of value) walk(part, around, inNode);
       return;
     }
-    const tag = value as Tag & Record<string, unknown>;
+    const tag = value as Tag & Record<string, unknown> & { data?: string };
     const library = tag.type === 'InlineComponent' && (tag.name === 'Node' || tag.name === 'Link');
+    const element = tag.type === 'Element' || (tag.type === 'InlineComponent' && !library);
+    const special = typeof tag.type === 'string' && Object.hasOwn(unsupportedMarkup, tag.type);
+    if (element || special) {
+      reject(
+        element
+          ? `<${tag.name}> is not allowed: draw everything with <Node> and <Link>, setting their props for style, such as <Node size="small" color="neutral">…</Node> instead of <small>.`
+          : `${unsupportedMarkup[tag.type as string]} is not allowed: draw everything with <Node> and <Link>.`,
+        'view_markup',
+        tag.start
+      );
+      return;
+    }
+    if (!inNode && ((tag.type === 'Text' && tag.data?.trim()) || tag.type === 'MustacheTag')) {
+      reject(
+        'Text outside a <Node> cannot be selected or styled; put it in a node, such as <Node>Linear search</Node>.',
+        'view_text',
+        // Point at the text itself, not the whitespace before it.
+        (tag.start ?? 0) + (tag.data ? tag.data.length - tag.data.trimStart().length : 0)
+      );
+      return;
+    }
     if (library && tag.start !== undefined) {
       const reserved = tag.attributes?.find(({ name }) => name?.startsWith('__'));
       if (reserved)
@@ -647,13 +687,21 @@ function withNodeRefs(
         if (around) around.links = true;
         else topLevelLinks = true;
       }
-      walk(tag.children, tag.name === 'Node' ? entry : around);
+      walk(tag.children, tag.name === 'Node' ? entry : around, true);
       return;
     }
+    const nested = inNode || tag.type === 'SnippetBlock';
     for (const [key, child] of Object.entries(tag))
-      if (key !== 'attributes' && key !== 'parent' && key !== 'metadata') walk(child, around);
+      if (key !== 'attributes' && key !== 'parent' && key !== 'metadata')
+        walk(child, around, nested);
   };
-  walk(ast.html, undefined);
+  if (ast.css)
+    reject(
+      'Views cannot have a <style>: style nodes with their props, such as fill, stroke, radius, padding, font, and size, and leave the rest unset so presentations vary.',
+      'view_style',
+      ast.css.start
+    );
+  walk(ast.html, undefined, false);
   let tagged = svelteSource;
   for (const { start, name, links } of tags.sort((a, b) => b.start - a.start)) {
     const { line, column } = sourcePosition(source, start);

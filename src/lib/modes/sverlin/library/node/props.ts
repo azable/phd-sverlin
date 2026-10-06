@@ -4,7 +4,7 @@
 export type Primitive = string | number | boolean | null;
 
 /** How a node arranges its items or children. */
-export type Layout = 'row' | 'column' | 'wrap' | 'grid' | 'free';
+export type Layout = 'row' | 'column' | 'grid' | 'free';
 
 /** How arranged items line up across the layout direction. */
 export type Align = 'start' | 'center' | 'end';
@@ -96,16 +96,24 @@ export type ShapeDefaults = {
   padding: Spacing;
   fill: string;
   stroke: string;
+  /** A cell's least size, text weight, and text size relative to its surroundings, in em. */
+  minSize?: MinSize;
+  weight?: Weight;
+  scale?: number;
 };
 
 /**
  * Defaults one presentation drew: per framed shape, how a frame spreads and aligns its children,
- * the gap between items, and the page font.
+ * a collection's shape, how rows and columns align their items, the gap between items, the page
+ * font, and the width of links in pixels.
  */
 export type NodeDefaults = {
   box: ShapeDefaults;
   card: ShapeDefaults;
   frame: { justify: Justify; align: Align; layout: FrameLayout };
+  collection: { shape: NodeShape };
+  align: { row: Align; column: Align };
   gap: Spacing;
   font: NodeFont;
+  link: { strokeWidth: number };
 };
