@@ -9,19 +9,13 @@ const manifest = {
 };
 
 describe('HTML assistant contract', () => {
-  it('uses the shared intake brief and produces distinct options when requested', () => {
-    expect(htmlAssistant.participantIntake.map(({ id }) => id)).toEqual([
-      'algorithm',
-      'audience',
-      'style'
-    ]);
-    expect(htmlAssistant.initialPrompt).toContain(
-      'return exactly two materially distinct candidates'
-    );
-    expect(htmlAssistant.initialPrompt).toContain('Do not infer a visual style from the audience');
+  it('uses the shared intake brief and makes one candidate at a time', () => {
+    expect(htmlAssistant.participantIntake.map(({ id }) => id)).toEqual(['algorithm']);
+    expect(htmlAssistant.initialPrompt).toContain('Return zero or one complete');
+    expect(htmlAssistant.initialPrompt).toContain('Do not infer a visual style from an audience');
   });
 
-  it('accepts zero to two labelled candidates per conversational turn', () => {
+  it('accepts zero or one labelled candidate per conversational turn', () => {
     expect(
       htmlAssistant.parseOutput({
         reply: [{ type: 'markdown', text: 'No change' }],
@@ -34,18 +28,21 @@ describe('HTML assistant contract', () => {
     expect(
       htmlAssistant.parseOutput({
         reply: [{ type: 'candidate-ref', slot: 0 }],
+        candidates: [{ label: 'First', manifest }]
+      })
+    ).toEqual({
+      reply: [{ type: 'candidate-ref', slot: 0 }],
+      candidates: [{ label: 'First', manifest }]
+    });
+    expect(() =>
+      htmlAssistant.parseOutput({
+        reply: [{ type: 'markdown', text: 'Two' }],
         candidates: [
           { label: 'First', manifest },
           { label: 'Second', manifest }
         ]
       })
-    ).toEqual({
-      reply: [{ type: 'candidate-ref', slot: 0 }],
-      candidates: [
-        { label: 'First', manifest },
-        { label: 'Second', manifest }
-      ]
-    });
+    ).toThrow();
   });
 
   it('rejects the former string reply and unlabelled candidate shape', () => {

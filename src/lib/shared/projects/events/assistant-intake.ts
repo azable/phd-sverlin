@@ -4,7 +4,10 @@ import * as v from 'valibot';
 
 import { eventEnvelope, positiveSchema } from './values';
 
-/** Stable identifiers for the ordered participant-intake questions. */
+/**
+ * Stable identifiers for the participant-intake questions. Only the algorithm is asked now; audience
+ * and style remain readable in projects begun when they were asked.
+ */
 export const participantIntakeStepSchema = v.picklist(['algorithm', 'audience', 'style']);
 
 export type ParticipantIntakeStepId = v.InferOutput<typeof participantIntakeStepSchema>;

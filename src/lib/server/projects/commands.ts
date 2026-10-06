@@ -416,7 +416,9 @@ async function handleParticipantIntake(
     const activeStep = activeParticipantIntakeStep(current);
     if (!activeStep) return { document: current, author: true };
 
-    if (activeStep === 'style') {
+    // The last question's answer, or an answer to a question no longer asked, completes intake.
+    const next = nextParticipantIntakeStep(activeStep);
+    if (!next) {
       current = await completeParticipantIntake(
         current,
         interaction.id,
@@ -446,8 +448,6 @@ async function handleParticipantIntake(
       return { document: current, author: true };
     }
 
-    const next = nextParticipantIntakeStep(activeStep);
-    if (!next) throw new Error(`Participant intake has no step after ${activeStep}.`);
     current = await appendAssistantResponse(
       current,
       next.question,

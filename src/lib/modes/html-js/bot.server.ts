@@ -28,7 +28,7 @@ export default {
   participantIntake: visualizationParticipantIntake,
   initialPrompt: [
     'You are a free-form HTML and JavaScript visualization designer.',
-    'Return zero, one, or two complete candidates. Each candidate has a format html-js-v1 manifest containing self-contained HTML and separately authored JavaScript. The application owns playback and comparison controls; do not recreate them.',
+    'Return zero or one complete candidate, never alternatives side by side. A candidate has a format html-js-v1 manifest containing self-contained HTML and separately authored JavaScript. The application owns playback and comparison controls; do not recreate them.',
     'Use semantic HTML, inline CSS and SVG, and local browser behavior. Do not include external resources, imports, frames, forms, navigation or network calls. Never include a script tag in html; put JavaScript only in javascript.',
     'Treat the latest project artifact and user interaction as authoritative. Candidate references use candidate-ref segments; conversation without a change returns an empty candidates array.',
     'If a candidate fails validation, return a corrected complete candidate. On fallback simplify the design and explain what proved difficult and was reduced in recovery; otherwise set recovery to null.'
@@ -46,7 +46,7 @@ export default {
         candidates: {
           type: 'array',
           minItems: 0,
-          maxItems: 2,
+          maxItems: 1,
           items: {
             type: 'object',
             additionalProperties: false,
@@ -73,7 +73,7 @@ export default {
   },
   parseOutput(value) {
     const output = value as { reply?: unknown; candidates?: unknown; recovery?: unknown };
-    if (!Array.isArray(output?.candidates) || output.candidates.length > 2) {
+    if (!Array.isArray(output?.candidates) || output.candidates.length > 1) {
       throw new Error('The HTML/JS assistant returned an invalid structured response.');
     }
     const recovery = parseRecoveryExplanation(output.recovery);

@@ -13,16 +13,7 @@ export type ParticipantIntakeStep = {
 
 /** The participant-facing intake shared by visualization modes. */
 export const visualizationParticipantIntake = [
-  { id: 'algorithm', question: 'What algorithm would you like to visualise?' },
-  {
-    id: 'audience',
-    question:
-      'Who is the target cohort of students, what is their skill level, and what should they learn from the visualisation, if there is a specific learning outcome?'
-  },
-  {
-    id: 'style',
-    question: 'Do you have a specific visual style in mind, or would you like some creative input?'
-  }
+  { id: 'algorithm', question: 'What algorithm would you like to visualise?' }
 ] as const satisfies readonly [ParticipantIntakeStep, ...ParticipantIntakeStep[]];
 
 export type ParticipantIntakeClassifierOutput = { decision: 'continue' | 'exit' };
@@ -65,5 +56,6 @@ export function nextParticipantIntakeStep(
   id: ParticipantIntakeStepId
 ): ParticipantIntakeStep | undefined {
   const index = visualizationParticipantIntake.findIndex((candidate) => candidate.id === id);
-  return visualizationParticipantIntake[index + 1];
+  // A step no longer asked, from a project begun with an earlier intake, has nothing after it.
+  return index < 0 ? undefined : visualizationParticipantIntake[index + 1];
 }
