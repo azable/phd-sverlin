@@ -8,7 +8,12 @@ in the same change as the language, the library props, or the drawn defaults.
 
 # The Sverlin language
 
-A Sverlin component is one Svelte file that describes an algorithm visualization. It records the steps of an algorithm and draws a view of each step. A presentation is one build of the component from its own seed: every presentation shows the same input and algorithm, with its own drawn design values and drawn defaults. Participants compare presentations in pairs, so the two presentations of a pair should differ in how they show the algorithm.
+A Sverlin component is one Svelte file that describes an algorithm/program
+visualization. It records the steps of an algorithm or program and draws a view
+of each step. A presentation is one build of the component from its own seed:
+every presentation shows the same input and algorithm, with its own drawn design
+values and drawn defaults. Participants compare presentations in pairs, so the
+two presentations of a pair should differ in how they show the algorithm.
 
 ## Blocks
 
